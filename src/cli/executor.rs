@@ -1,7 +1,7 @@
 use std::{env, process::Command};
 use std::io::{self, Write};
 
-use crate::core::container::{create_new_container, delete_container, start_container, attach_to_container, stop_container, send_command, list_containers};
+use crate::core::container::{create_new_container, delete_container, start_container, attach_to_container, stop_container, send_command, list_containers, upload_to_container};
 use crate::core::setup::install;
 use crate::cli::color_text::{RED,YELLOW, BOLD, RESET};
 use crate::core::user_management::{add_melisa_user,set_user_password, delete_melisa_user, list_melisa_users, upgrade_user, clean_orphaned_sudoers};
@@ -39,6 +39,7 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                     println!("  --users            List all users with Melisa access");
                     println!("  --upgrade <user>   Upgrade a user's permissions (e.g., to sudo)");
                     println!("  --clean            Clean orphaned sudoers files for non-existent users");
+                    println!("  --upload <name> <dest_path>  Upload a file to a container");
                 },
                 "--setup" => {
                     install();
@@ -92,6 +93,13 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                         }
                     } else {
                         println!("{}Error: Name required.{}", RED, RESET);
+                    }
+                },
+                "--upload" => {
+                    if let (Some(name), Some(dest)) = (parts.get(2), parts.get(3)) {
+                        upload_to_container(name, dest);
+                    } else {
+                        println!("{}Usage: melisa --upload <name> <dest_path>{}", RED, RESET);
                     }
                 },
                 "--list" => {

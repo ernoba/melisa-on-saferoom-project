@@ -5,6 +5,8 @@ use std::process::Command;
 use cli::melisa_cli::melisa;
 use cli::wellcome::display_melisa_banner;
 use core::root_check::check_root;
+use cli::prompt::Prompt;
+use cli::executor::execute_command;
 
 fn main() {
     // 1. SELF-ESCALATION DENGAN CLEAN ENVIRONMENT
@@ -25,6 +27,17 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+
+    // Mode Headless / Non-Interaktif untuk menangkap perintah SSH
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "-c" {
+        let cmd_string = &args[2];
+        let p_info = Prompt::new();
+        
+        // Eksekusi perintah secara diam-diam dan langsung keluar
+        let _ = execute_command(cmd_string, &p_info.user, &p_info.home);
+        std::process::exit(0); 
     }
 
     // 2. LOGIKA UTAMA (Sekarang berjalan sebagai Root dengan HOME=/root)

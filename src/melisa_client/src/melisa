@@ -1,0 +1,49 @@
+#!/bin/bash
+# Melisa Client Router
+
+MELISA_LIB="$HOME/.local/share/melisa"
+
+# Source Modules
+source "$MELISA_LIB/utils.sh"
+source "$MELISA_LIB/auth.sh"
+source "$MELISA_LIB/exec.sh"
+
+init_auth
+
+if [ "$#" -lt 1 ]; then
+    echo -e "${BOLD}${CYAN}Melisa Remote Manager${RESET}"
+    echo -e "${BOLD}Usage:${RESET} melisa <command> [args]\n"
+    echo -e "${BOLD}Authentication:${RESET}"
+    echo "  auth add <name> <user@ip> : Mendaftarkan server baru"
+    echo "  auth switch <name>        : Ganti ke server lain"
+    echo "  auth list                 : Lihat server tersimpan"
+    echo -e "\n${BOLD}Operations (pada server aktif):${RESET}"
+    echo "  run <container> <file>    : Jalankan script di container"
+    echo "  upload <cont> <dir> <dst> : Upload folder ke container"
+    echo "  shell                     : Buka shell Melisa"
+    echo "  --list / --active         : Daftar container"
+    exit 1
+fi
+
+COMMAND=$1
+shift
+
+case $COMMAND in
+    auth)
+        SUB=$1; shift
+        case $SUB in
+            add) auth_add "$1" "$2" ;;
+            switch) auth_switch "$1" ;;
+            list) auth_list ;;
+            *) log_error "Usage: melisa auth [add|switch|list]" ;;
+        esac
+        ;;
+    run) exec_run "$1" "$2" ;;
+    upload) exec_upload "$1" "$2" "$3" ;;
+    shell) 
+        ensure_connected
+        log_success "Terhubung ke Melisa Shell ($CONN)..."
+        ssh "$CONN" 
+        ;;
+    *) exec_forward "$COMMAND" "$@" ;;
+esac

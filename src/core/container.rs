@@ -221,6 +221,7 @@ pub fn send_command(name: &str, command_args: &[&str]) {
         .arg(name)
         .arg("--")
         .args(command_args)
+        .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status();
@@ -229,6 +230,23 @@ pub fn send_command(name: &str, command_args: &[&str]) {
     match status {
         Ok(s) if s.success() => println!("\n{}[DONE]{} Command executed successfully.", GREEN, RESET),
         _ => eprintln!("\n{}[ERROR]{} Command inside container returned an error.", RED, RESET),
+    }
+}
+
+//penanganan upload file ke container dengan tarball via stdin
+pub fn upload_to_container(name: &str, dest_path: &str) {
+    let extract_cmd = format!("mkdir -p {} && tar -xzf - -C {}", dest_path, dest_path);
+    
+    let status = Command::new("sudo")
+        .args(&["lxc-attach", "-P", LXC_PATH, "-n", name, "--", "bash", "-c", &extract_cmd])
+        .stdin(Stdio::inherit())  // Menerima file tarbal dari koneksi klien
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => println!("Upload ke '{}' selesai.", dest_path),
+        _ => eprintln!("Gagal mengekstrak data di dalam container."),
     }
 }
 
