@@ -1,16 +1,10 @@
 use std::{env, process::Command};
 use std::io::{self, Write};
 
-use crate::cli::container::create_new_container;
-use crate::cli::container::delete_container;
-use crate::cli::container::start_container;
-use crate::cli::container::attach_to_container;
-use crate::cli::container::stop_container;
-use crate::cli::container::send_command;
-use crate::cli::container::list_containers;
-use crate::cli::container::{add_melisa_user,set_user_password, delete_melisa_user, list_melisa_users, upgrade_user, clean_orphaned_sudoers};
-use crate::cli::setup::install;
+use crate::core::container::{create_new_container, delete_container, start_container, attach_to_container, stop_container, send_command, list_containers};
+use crate::core::setup::install;
 use crate::cli::color_text::{RED,YELLOW, BOLD, RESET};
+use crate::core::user_management::{add_melisa_user,set_user_password, delete_melisa_user, list_melisa_users, upgrade_user, clean_orphaned_sudoers};
 
 pub enum ExecResult {
     Continue,

@@ -1,9 +1,10 @@
 mod cli;
+mod core;
 
 use std::process::Command;
-use cli::root_check::check_root;
 use cli::melisa_cli::melisa;
 use cli::wellcome::display_melisa_banner;
+use core::root_check::check_root;
 
 fn main() {
     // 1. SELF-ESCALATION DENGAN CLEAN ENVIRONMENT
