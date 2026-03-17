@@ -17,9 +17,10 @@ if [ "$#" -lt 1 ]; then
     echo "  auth add <name> <user@ip> : Mendaftarkan server baru"
     echo "  auth switch <name>        : Ganti ke server lain"
     echo "  auth list                 : Lihat server tersimpan"
+    echo "  auth remove <name>        : Hapus server dari daftar" # <-- Tambahkan ini
     echo -e "\n${BOLD}Operations (pada server aktif):${RESET}"
     echo "  run <container> <file>    : Jalankan script di container"
-    echo "  run-tty <cont> <file>     : Jalankan script interaktif (bisa ketik input)"
+    echo "  run-tty <cont> <file>     : Jalankan script interaktif"
     echo "  upload <cont> <dir> <dst> : Upload folder ke container"
     echo "  shell                     : Buka shell Melisa"
     echo "  --list / --active         : Daftar container"
@@ -33,10 +34,11 @@ case $COMMAND in
     auth)
         SUB=$1; shift
         case $SUB in
-            add) auth_add "$1" "$2" ;;
+            add)    auth_add "$1" "$2" ;;
             switch) auth_switch "$1" ;;
-            list) auth_list ;;
-            *) log_error "Usage: melisa auth [add|switch|list]" ;;
+            list)   auth_list ;;
+            remove) auth_remove "$1" ;;
+            *)      log_error "Usage: melisa auth [add|switch|list|remove]" ;;
         esac
         ;;
     run) exec_run "$1" "$2" ;;

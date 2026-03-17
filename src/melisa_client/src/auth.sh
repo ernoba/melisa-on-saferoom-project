@@ -52,6 +52,40 @@ EOF
     log_success "Server '$name' ($user_host) berhasil ditambahkan dan dijadikan AKTIF!"
 }
 
+auth_remove() {
+    local name=$1
+    
+    if [ -z "$name" ]; then
+        log_error "Usage: melisa auth remove <profile_name>"
+        return 1
+    fi
+
+    # Pastikan profil memang ada sebelum mencoba menghapus
+    if ! grep -q "^${name}=" "$PROFILE_FILE"; then
+        log_error "Server '$name' tidak ditemukan dalam daftar."
+        return 1
+    fi
+
+    # Konfirmasi penghapusan (Opsional, tapi lebih aman)
+    read -p "Apakah Anda yakin ingin menghapus profil '$name'? (y/n): " confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        log_info "Penghapusan dibatalkan."
+        return 0
+    fi
+
+    # Menghapus baris yang mengandung profil tersebut
+    sed -i "/^${name}=/d" "$PROFILE_FILE"
+
+    # Jika profil yang dihapus adalah profil yang sedang AKTIF, kosongkan file ACTIVE_FILE
+    local active=$(cat "$ACTIVE_FILE" 2>/dev/null)
+    if [ "$name" == "$active" ]; then
+        rm -f "$ACTIVE_FILE"
+        log_info "Profil '$name' yang sedang aktif telah dihapus. Silakan switch ke profil lain."
+    fi
+
+    log_success "Server '$name' berhasil dihapus dari daftar."
+}
+
 auth_switch() {
     local name=$1
     if grep -q "^${name}=" "$PROFILE_FILE"; then

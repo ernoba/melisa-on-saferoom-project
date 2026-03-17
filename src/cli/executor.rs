@@ -1,5 +1,6 @@
-use std::{env, process::Command};
-use std::io::{self, Write};
+use tokio::process::Command; // Gunakan tokio
+use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt}; // Untuk async stdin/stdout
+use std::env;
 
 use crate::core::container::*;
 use crate::core::setup::install;
@@ -7,7 +8,10 @@ use crate::core::root_check::admin_check;
 use crate::distros::distro::get_lxc_distro_list;
 use crate::cli::loading::execute_with_spinner;
 use crate::cli::color_text::{RED, GREEN, YELLOW, BOLD, RESET};
-use crate::core::user_management::{add_melisa_user,set_user_password, delete_melisa_user, list_melisa_users, upgrade_user, clean_orphaned_sudoers};
+use crate::core::user_management::{
+    add_melisa_user, set_user_password, delete_melisa_user, 
+    list_melisa_users, upgrade_user, clean_orphaned_sudoers
+};
 
 pub enum ExecResult {
     Continue,
@@ -15,12 +19,12 @@ pub enum ExecResult {
     Error(String),
 }
 
-pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
+// 1. Ubah menjadi async fn
+pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
     let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.is_empty() { return ExecResult::Continue; }
 
     match parts[0] {
-        // MAIN COMMANDS is melisa
         "melisa" => {
             let sub_cmd = parts.get(1).map(|&s| s).unwrap_or("");
 
@@ -55,15 +59,14 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                         println!("  --share <name> <host_path> <cont_path>  Share a folder between host and container");
                         println!("  --reshare <name> <host_path> <cont_path>  Remove a shared folder between host and container");
                      }
-                    
                 },
                 "--setup" => {
-                    install();
+                    // Jika install() melakukan operasi I/O berat, 
+                    // pertimbangkan menjadikannya async juga
+                    install().await;
                 },
                 "--search" => {
                     let keyword = parts.get(2).unwrap_or(&"").to_lowercase();
-
-                    // Panggil helper di sini
                     let list = execute_with_spinner("Sedang mencari distro...", || {
                         get_lxc_distro_list()
                     });
@@ -75,7 +78,6 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                         }
                     }
                 },
-                // Di src/cli/executor.rs bagian --create
                 "--create" => {
                     let name = parts.get(2).unwrap_or(&"");
                     let code = parts.get(3).unwrap_or(&"");
@@ -85,13 +87,12 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                         return ExecResult::Continue;
                     }
 
-                    // Gunakan spinner untuk mengambil list distro
                     let list = execute_with_spinner("Memvalidasi distro...", || {
                         get_lxc_distro_list()
                     });
 
                     if let Some(meta) = list.into_iter().find(|d| d.slug == *code) {
-                        // Gunakan spinner lagi untuk proses pembuatan container (karena ini lama)
+                        // Container creation biasanya lama, pastikan create_new_container async
                         execute_with_spinner(&format!("Sedang membuat container {}...", name), || {
                             create_new_container(name, meta);
                         });
@@ -102,24 +103,22 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                 },
                 "--delete" => {
                     if let Some(name) = parts.get(2) {
-                        print!("{}Are you sure you want to delete container '{}'? {}This action cannot be undone. (y/N) {}",
-                            BOLD, name, RED, RESET);
-                        let _ = io::stdout().flush(); // WAJIB ADA
+                        print!("{}Are you sure delete '{}'? {} (y/N) {}", BOLD, name, RED, RESET);
+                        let _ = io::stdout().flush().await; // Async flush
+
                         let mut confirmation = String::new();
-                        if std::io::stdin().read_line(&mut confirmation).is_ok() {
+                        let mut reader = io::BufReader::new(io::stdin());
+                        if reader.read_line(&mut confirmation).await.is_ok() {
                             if confirmation.trim().eq_ignore_ascii_case("y") {
                                 delete_container(name);
                             }
                         }
-                    } else {
-                        println!("{}Error: Container name is required. Usage: melisa --delete-container <name>{}", RED, RESET);
                     }
                 },
+                // 2. Tambahkan .await pada pemanggilan Command luar (jika ada)
                 "--run" => {
                     if let Some(name) = parts.get(2) {
-                        start_container(name);
-                    } else {
-                        println!("{}Error: Container name is required. Usage: melisa --run <name>{}", RED, RESET);
+                        start_container(name); // Jika ini memanggil LXC, jadikan async
                     }
                 },
                 "--use" => {
@@ -195,10 +194,15 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                 "--remove" => {
                     if let Some(name) = parts.get(2) {
                         println!("{}Are you sure delete user '{}'? (y/N){}", YELLOW, name, RESET);
+                        let _ = io::stdout().flush().await; // Flush agar text muncul
+
                         let mut conf = String::new();
-                        io::stdin().read_line(&mut conf).unwrap();
-                        if conf.trim().to_lowercase() == "y" {
-                            delete_melisa_user(name);
+                        let mut reader = io::BufReader::new(io::stdin());
+                        if reader.read_line(&mut conf).await.is_ok() {
+                            if conf.trim().to_lowercase() == "y" {
+                                // Pastikan fungsi ini juga async!
+                                delete_melisa_user(name); 
+                            }
                         }
                     } else {
                         println!("{}Usage: melisa --del <user>{}", RED, RESET);
@@ -242,11 +246,13 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
             }
         },
 
+        // 3. Eksekusi Perintah System Secara Async
         _ => {
             let cargo_bin = format!("{}/.cargo/bin", home);
             let path_env = format!("{}:{}", cargo_bin, env::var("PATH").unwrap_or_default());
 
-            let _ = Command::new("bash")
+            // Menggunakan tokio::process::Command
+            let status = Command::new("bash")
                 .env("PATH", path_env)
                 .env("HOME", home)
                 .env("USER", user)
@@ -256,9 +262,13 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                     ("RUSTUP_TOOLCHAIN", "stable".into())
                 ])
                 .args(["-c", input])
-                .status();
+                .status()
+                .await; // <--- WAJIB AWAIT
             
-            ExecResult::Continue
+            match status {
+                Ok(_) => ExecResult::Continue,
+                Err(e) => ExecResult::Error(format!("Execution error: {}", e)),
+            }
         }
     }
 }
