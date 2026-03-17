@@ -3,28 +3,36 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
+// Fungsi ini sekarang menerima DistroMetadata
+use std::thread;
+use std::time::Duration;
+
 use crate::core::root_check::ensure_admin;
 use crate::cli::color_text::{BOLD, GREEN, RED, RESET, YELLOW}; 
 
-const LXC_PATH: &str = "/var/lib/lxc";
+pub const LXC_PATH: &str = "/var/lib/lxc"; // Tambah pub
 
-pub fn create_new_container(name: &str) {
+#[derive(Debug, Clone)]
+pub struct DistroMetadata {
+    pub slug: String,       
+    pub name: String,       
+    pub release: String,    
+    pub arch: String,       
+    #[allow(dead_code)]
+    pub variant: String,    // Pastikan ini ada
+    pub pkg_manager: String 
+}
+
+pub fn create_new_container(name: &str, meta: DistroMetadata) {
     if !ensure_admin() { return; }
-    
-    // 1. Siapkan environment host dulu
     ensure_host_network_ready();
 
-    println!("{}--- Creating Container: {} ---{}", BOLD, name, RESET);
-    let process = Command::new("sudo") // Tambahkan sudo lagi di sini jika melisa tidak dijalankan sebagai root
+    println!("{}--- Creating Container: {} ({}) ---{}", BOLD, name, meta.slug, RESET);
+    
+    let process = Command::new("sudo")
         .args(&[
-            "lxc-create", 
-            "-P", LXC_PATH, 
-            "-t", "download", 
-            "-n", name, 
-            "--", 
-            "-d", "debian", 
-            "-r", "bookworm", 
-            "-a", "amd64"
+            "lxc-create", "-P", LXC_PATH, "-t", "download", "-n", name, 
+            "--", "-d", &meta.name, "-r", &meta.release, "-a", &meta.arch
         ])
         .output();
 
@@ -33,19 +41,26 @@ pub fn create_new_container(name: &str) {
             if output.status.success() {
                 println!("{}[SUCCESS]{} Container created.", GREEN, RESET);
                 
-                // 2. Suntikkan konfigurasi network
+                // 1. Injeksi konfigurasi jaringan & DNS saat kontainer masih mati
                 inject_network_config(name);
+                setup_container_dns(name); 
+
+                // 2. PERBAIKAN: Nyalakan kontainer terlebih dahulu!
+                println!("{}[INFO]{} Starting container for initial setup...", YELLOW, RESET);
+                start_container(name);
+
+                // 3. PERBAIKAN: Tunggu beberapa detik agar DHCP mendapatkan IP Address
+                println!("{}[INFO]{} Menunggu antarmuka jaringan dan DHCP siap (5 detik)...", YELLOW, RESET);
+                thread::sleep(Duration::from_secs(5));
+
+                // 4. Setelah jaringan siap, baru eksekusi setup package manager
+                auto_initial_setup(name, &meta.pkg_manager);
                 
-                // 3. Setup DNS agar apt update jalan
-                setup_container_dns(name);
-                
-                println!("{}[INFO]{} Network & DNS has been injected successfully.", GREEN, RESET);
-            }  else {
+            } else {
                 let error_msg = String::from_utf8_lossy(&output.stderr);
                 
                 if error_msg.contains("already exists") {
                     println!("{}[WARNING]{} Container '{}' sudah ada. Melewati proses pembuatan.", YELLOW, RESET, name);
-                    // LOGIC ERROR: Jangan injeksi lagi jika sudah ada untuk menghindari duplikasi config
                 } else if error_msg.contains("GPG") {
                     eprintln!("{}[ERROR]{} Masalah tanda tangan GPG. Coba jalankan 'gpg --recv-keys' di host.", RED, RESET);
                 } else if error_msg.contains("download") {
@@ -57,6 +72,30 @@ pub fn create_new_container(name: &str) {
             }
         },
         Err(e) => eprintln!("{}[FATAL]{} Could not run lxc-create: {}", RED, RESET, e),
+    }
+}
+
+fn auto_initial_setup(name: &str, pkg_manager: &str) {
+    let cmd = match pkg_manager {
+        "apt"    => "apt-get update -y",                           // Ubuntu/Debian
+        "dnf"    => "dnf makecache",                               // Fedora/RHEL baru
+        "yum"    => "yum makecache",                               // CentOS/RHEL lama
+        "apk"    => "apk update",                                  // Alpine
+        "pacman" => "pacman -Sy --noconfirm",                      // Arch Linux
+        "zypper" => "zypper --non-interactive refresh",            // openSUSE/SLES
+        _        => "true",                                        // Fallback aman jika tidak dikenali
+    };
+    
+    println!("{}[INFO]{} Updating package repository for '{}'...", YELLOW, RESET, name);
+
+    // Tetap menggunakan "sh" agar kompatibel dengan distro minimalis seperti Alpine
+    let status = Command::new("sudo")
+        .args(&["lxc-attach", "-n", name, "--", "sh", "-c", cmd])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => println!("{}[SUCCESS]{} Initial setup (repo update) completed for {}.", GREEN, RESET, name),
+        _ => eprintln!("{}[ERROR]{} Failed to run initial setup on {}.", RED, RESET, name),
     }
 }
 
@@ -103,23 +142,20 @@ fn setup_container_dns(name: &str) {
     }
 }
 
-fn ensure_host_network_ready() {
+pub fn ensure_host_network_ready() {
     // Pastikan lxc-net aktif
-    Command::new("systemctl")
+    let _ = Command::new("systemctl")
         .args(&["start", "lxc-net"])
-        .output()
-        .ok();
+        .status();
 
-    // Pastikan firewalld mengizinkan lxcbr0 (agar internet tidak terblokir)
-    Command::new("firewall-cmd")
+    // Pastikan firewalld mengizinkan lxcbr0
+    let _ = Command::new("firewall-cmd")
         .args(&["--zone=trusted", "--add-interface=lxcbr0", "--permanent"])
-        .output()
-        .ok();
+        .status();
     
-    Command::new("firewall-cmd")
-        .args(&[ "--reload"])
-        .output()
-        .ok();
+    let _ = Command::new("firewall-cmd")
+        .args(&["--reload"])
+        .status();
 }
 
 pub fn delete_container(name: &str) {

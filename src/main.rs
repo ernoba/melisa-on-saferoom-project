@@ -15,6 +15,8 @@ mod cli;
 /// seperti pengecekan hak akses root
 mod core;
 
+mod distros; // <-- Modul baru untuk manajemen distro LXC
+
 // modul std
 use std::process::Command;
 

@@ -1,9 +1,13 @@
 use std::{env, process::Command};
 use std::io::{self, Write};
 
-use crate::core::container::{create_new_container, delete_container, start_container, attach_to_container, stop_container, send_command, list_containers, upload_to_container, add_shared_folder, remove_shared_folder};
+use indicatif::{ProgressBar, ProgressStyle}; // Import library
+use std::time::Duration;
+
+use crate::core::container::*;
 use crate::core::setup::install;
 use crate::core::root_check::admin_check;
+use crate::distros::distro::get_lxc_distro_list;
 use crate::cli::color_text::{RED,YELLOW, BOLD, RESET};
 use crate::core::user_management::{add_melisa_user,set_user_password, delete_melisa_user, list_melisa_users, upgrade_user, clean_orphaned_sudoers};
 
@@ -36,6 +40,7 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                         println!("Options:");
                         println!("  --help             Show this help message");
                         println!("  --setup            Setup LXC environment (install dependencies, etc.)");
+                        println!("  --search <keyword> Search available LXC distros by keyword");
                         println!("  --create <name>    Create a new LXC container");
                         println!("  --delete <name>    Delete an existing LXC container");
                         println!("  --run <name>       Run a command inside a container");
@@ -57,11 +62,42 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                 "--setup" => {
                     install();
                 },
+                "--search" => {
+                    let keyword = parts.get(2).unwrap_or(&"").to_lowercase();
+
+                    // 1. Inisialisasi Spinner
+                    let pb = ProgressBar::new_spinner();
+                    pb.set_style(
+                        ProgressStyle::default_spinner()
+                            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                            .template("{spinner:.green} {msg}")
+                            .unwrap(),
+                    );
+                    pb.set_message("Sedang mencari distro...");
+                    pb.enable_steady_tick(Duration::from_millis(100)); // Jalankan animasi setiap 100ms
+
+                    // 2. Jalankan fungsi yang berat/lambat
+                    let list = get_lxc_distro_list();
+
+                    // 3. Berhentikan dan hapus spinner sebelum mencetak hasil
+                    pb.finish_and_clear();
+
+                    // 4. Cetak hasil seperti biasa
+                    println!("{:<20} | {:<10} | {:<10}", "KODE UNIK", "DISTRO", "ARCH");
+                    for d in list {
+                        if d.slug.contains(&keyword) || d.name.contains(&keyword) {
+                            println!("{:<20} | {:<10} | {:<10}", d.slug, d.name, d.arch);
+                        }
+                    }
+                },
                 "--create" => {
-                    if let Some(name) = parts.get(2) {
-                        create_new_container(name);
+                    let name = parts.get(2).expect("Nama container?");
+                    let code = parts.get(3).expect("Kode unik distro?");
+                    let list = get_lxc_distro_list();
+                    if let Some(meta) = list.into_iter().find(|d| d.slug == *code) {
+                        create_new_container(name, meta);
                     } else {
-                        println!("{}Error: Container name is required. Usage: melisa --create <name>{}", RED, RESET);
+                        println!("Error: Kode '{}' tidak ada.", code);
                     }
                 },
                 "--delete" => {
