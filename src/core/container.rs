@@ -41,19 +41,19 @@ pub fn create_new_container(name: &str, meta: DistroMetadata) {
             if output.status.success() {
                 println!("{}[SUCCESS]{} Container created.", GREEN, RESET);
                 
-                // 1. Injeksi konfigurasi jaringan & DNS saat kontainer masih mati
+                // Injeksi konfigurasi dasar
                 inject_network_config(name);
                 setup_container_dns(name); 
 
-                // 2. PERBAIKAN: Nyalakan kontainer terlebih dahulu!
+                // Jalankan kontainer untuk setup lanjutan
                 println!("{}[INFO]{} Starting container for initial setup...", YELLOW, RESET);
                 start_container(name);
 
-                // 3. PERBAIKAN: Tunggu beberapa detik agar DHCP mendapatkan IP Address
+                // Menunggu koneksi internet siap di dalam kontainer
                 println!("{}[INFO]{} Menunggu antarmuka jaringan dan DHCP siap (5 detik)...", YELLOW, RESET);
                 thread::sleep(Duration::from_secs(5));
 
-                // 4. Setelah jaringan siap, baru eksekusi setup package manager
+                // Eksekusi update berdasarkan pkg_manager distro tersebut
                 auto_initial_setup(name, &meta.pkg_manager);
                 
             } else {
@@ -77,24 +77,22 @@ pub fn create_new_container(name: &str, meta: DistroMetadata) {
 
 fn auto_initial_setup(name: &str, pkg_manager: &str) {
     let cmd = match pkg_manager {
-        "apt"    => "apt-get update -y",                           // Ubuntu/Debian
-        "dnf"    => "dnf makecache",                               // Fedora/RHEL baru
-        "yum"    => "yum makecache",                               // CentOS/RHEL lama
-        "apk"    => "apk update",                                  // Alpine
-        "pacman" => "pacman -Sy --noconfirm",                      // Arch Linux
-        "zypper" => "zypper --non-interactive refresh",            // openSUSE/SLES
-        _        => "true",                                        // Fallback aman jika tidak dikenali
+        "apt"    => "apt-get update -y", 
+        "dnf"    => "dnf makecache",
+        "apk"    => "apk update",
+        "pacman" => "pacman -Sy --noconfirm",
+        "zypper" => "zypper --non-interactive refresh",
+        _        => "true",
     };
     
     println!("{}[INFO]{} Updating package repository for '{}'...", YELLOW, RESET, name);
 
-    // Tetap menggunakan "sh" agar kompatibel dengan distro minimalis seperti Alpine
     let status = Command::new("sudo")
         .args(&["lxc-attach", "-n", name, "--", "sh", "-c", cmd])
         .status();
 
     match status {
-        Ok(s) if s.success() => println!("{}[SUCCESS]{} Initial setup (repo update) completed for {}.", GREEN, RESET, name),
+        Ok(s) if s.success() => println!("{}[SUCCESS]{} Initial setup completed for {}.", GREEN, RESET, name),
         _ => eprintln!("{}[ERROR]{} Failed to run initial setup on {}.", RED, RESET, name),
     }
 }
@@ -130,9 +128,21 @@ fn inject_network_config(name: &str) {
         file.write_all(net_config.as_bytes()).ok();
     }
 }
+
 fn setup_container_dns(name: &str) {
-    // Path menuju resolv.conf di dalam rootfs container
-    let dns_path = format!("{}/{}/rootfs/etc/resolv.conf", LXC_PATH, name);
+    let etc_path = format!("{}/{}/rootfs/etc", LXC_PATH, name);
+    let dns_path = format!("{}/resolv.conf", etc_path);
+    
+    // 1. Pastikan folder /etc di dalam rootfs benar-benar ada
+    if let Err(e) = std::fs::create_dir_all(&etc_path) {
+        eprintln!("{}[ERROR]{} Gagal memastikan folder /etc: {}", RED, RESET, e);
+        return;
+    }
+
+    // 2. Jika resolv.conf adalah symlink (sering di Ubuntu/Debian), hapus agar bisa ditulis file asli
+    if std::fs::symlink_metadata(&dns_path).is_ok() {
+        let _ = std::fs::remove_file(&dns_path);
+    }
     
     let dns_content = "nameserver 8.8.8.8\nnameserver 8.8.4.4\n";
     

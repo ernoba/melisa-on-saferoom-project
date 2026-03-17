@@ -1,14 +1,12 @@
 use std::{env, process::Command};
 use std::io::{self, Write};
 
-use indicatif::{ProgressBar, ProgressStyle}; // Import library
-use std::time::Duration;
-
 use crate::core::container::*;
 use crate::core::setup::install;
 use crate::core::root_check::admin_check;
 use crate::distros::distro::get_lxc_distro_list;
-use crate::cli::color_text::{RED,YELLOW, BOLD, RESET};
+use crate::cli::loading::execute_with_spinner;
+use crate::cli::color_text::{RED, GREEN, YELLOW, BOLD, RESET};
 use crate::core::user_management::{add_melisa_user,set_user_password, delete_melisa_user, list_melisa_users, upgrade_user, clean_orphaned_sudoers};
 
 pub enum ExecResult {
@@ -41,7 +39,7 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                         println!("  --help             Show this help message");
                         println!("  --setup            Setup LXC environment (install dependencies, etc.)");
                         println!("  --search <keyword> Search available LXC distros by keyword");
-                        println!("  --create <name>    Create a new LXC container");
+                        println!("  --create <name> <distro_code>  Create a new LXC container");
                         println!("  --delete <name>    Delete an existing LXC container");
                         println!("  --run <name>       Run a command inside a container");
                         println!("  --use <name>       Attach to a container interactively");
@@ -65,24 +63,11 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                 "--search" => {
                     let keyword = parts.get(2).unwrap_or(&"").to_lowercase();
 
-                    // 1. Inisialisasi Spinner
-                    let pb = ProgressBar::new_spinner();
-                    pb.set_style(
-                        ProgressStyle::default_spinner()
-                            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-                            .template("{spinner:.green} {msg}")
-                            .unwrap(),
-                    );
-                    pb.set_message("Sedang mencari distro...");
-                    pb.enable_steady_tick(Duration::from_millis(100)); // Jalankan animasi setiap 100ms
+                    // Panggil helper di sini
+                    let list = execute_with_spinner("Sedang mencari distro...", || {
+                        get_lxc_distro_list()
+                    });
 
-                    // 2. Jalankan fungsi yang berat/lambat
-                    let list = get_lxc_distro_list();
-
-                    // 3. Berhentikan dan hapus spinner sebelum mencetak hasil
-                    pb.finish_and_clear();
-
-                    // 4. Cetak hasil seperti biasa
                     println!("{:<20} | {:<10} | {:<10}", "KODE UNIK", "DISTRO", "ARCH");
                     for d in list {
                         if d.slug.contains(&keyword) || d.name.contains(&keyword) {
@@ -90,14 +75,29 @@ pub fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
                         }
                     }
                 },
+                // Di src/cli/executor.rs bagian --create
                 "--create" => {
-                    let name = parts.get(2).expect("Nama container?");
-                    let code = parts.get(3).expect("Kode unik distro?");
-                    let list = get_lxc_distro_list();
+                    let name = parts.get(2).unwrap_or(&"");
+                    let code = parts.get(3).unwrap_or(&"");
+
+                    if name.is_empty() || code.is_empty() {
+                        println!("{}[ERROR]{} Nama dan Kode Distro harus diisi!", RED, RESET);
+                        return ExecResult::Continue;
+                    }
+
+                    // Gunakan spinner untuk mengambil list distro
+                    let list = execute_with_spinner("Memvalidasi distro...", || {
+                        get_lxc_distro_list()
+                    });
+
                     if let Some(meta) = list.into_iter().find(|d| d.slug == *code) {
-                        create_new_container(name, meta);
+                        // Gunakan spinner lagi untuk proses pembuatan container (karena ini lama)
+                        execute_with_spinner(&format!("Sedang membuat container {}...", name), || {
+                            create_new_container(name, meta);
+                        });
+                        println!("{}[SUCCESS]{} Container berhasil dibuat!", GREEN, RESET);
                     } else {
-                        println!("Error: Kode '{}' tidak ada.", code);
+                        println!("{}[ERROR]{} Kode '{}' tidak ditemukan.", RED, code, RESET);
                     }
                 },
                 "--delete" => {

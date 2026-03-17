@@ -4,3 +4,4 @@ pub mod helper;
 pub mod prompt;
 pub mod executor;
 pub mod wellcome;
+pub mod loading;

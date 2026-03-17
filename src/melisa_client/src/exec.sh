@@ -76,5 +76,6 @@ exec_run_tty() {
 
 exec_forward() {
     ensure_connected
-    ssh "$CONN" "melisa $*"
+    # Tambahkan -t agar animasi spinner dan warna muncul
+    ssh -t "$CONN" "melisa $*" 
 }
