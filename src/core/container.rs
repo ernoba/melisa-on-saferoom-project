@@ -430,7 +430,7 @@ pub async fn list_containers(only_active: bool) {
         cmd.arg("--active");
     }
 
-    let output = cmd.output().await; // Tambahkan await
+    let output = cmd.output().await; 
 
     match output {
         Ok(out) => {
