@@ -12,7 +12,7 @@ use crate::core::user_management::{
     add_melisa_user, set_user_password, delete_melisa_user, 
     list_melisa_users, upgrade_user, clean_orphaned_sudoers
 };
-use crate::core::project_management::{PROJECTS_MASTER, delete_project, invite, list_projects, new_project, out_user, pull, update_project};
+use crate::core::project_management::{PROJECTS_MASTER, delete_project, invite, list_projects, new_project, out_user, pull, update_project, update_all_users};
 
 pub enum ExecResult {
     Continue,
@@ -380,15 +380,42 @@ pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult 
                     out_user(targets, project_name).await;
                 },
 
+                // Cari bagian "--update" di src/cli/executor.rs
                 "--update" => {
-                    let username = &parts[2];
-                    let project_name = &parts[3];
-                    let mode = parts.contains(&"--force");
-
-                    if parts.len() < 2 {
-                        println!("nama , nama project dimana")
+                    if parts.len() < 3 {
+                        println!("{}[ERROR]{} Gunakan: melisa --update <project_name> [--force]", RED, RESET);
+                        return ExecResult::Continue;
                     }
-                    update_project(username, project_name, mode).await;
+
+                    // Ambil flag --force jika ada di urutan manapun
+                    let force_mode = parts.contains(&"--force");
+
+                    // Filter 'parts' agar tidak menyertakan flag --force untuk mengambil nama project
+                    let clean_args: Vec<&str> = parts.iter()
+                        .filter(|&&x| x != "--force" && x != "--update" && x != "melisa")
+                        .cloned()
+                        .collect();
+
+                    // Jika clean_args cuma 1, berarti itu nama project, usernya pake 'user' (SUDO_USER)
+                    // Jika clean_args ada 2, berarti [0] user, [1] project
+                    let (target_user, project_name) = if clean_args.len() == 1 {
+                        (user, clean_args[0])
+                    } else if clean_args.len() >= 2 {
+                        (clean_args[0], clean_args[1])
+                    } else {
+                        println!("{}[ERROR]{} Argumen tidak valid.", RED, RESET);
+                        return ExecResult::Continue;
+                    };
+
+                    update_project(target_user, project_name, force_mode).await;
+                },
+                "--update-all" => {
+                    if parts.len() < 3 {
+                        println!("{}[ERROR]{} Gunakan: melisa --update-all <project_name>", RED, RESET);
+                        return ExecResult::Continue;
+                    }
+                    let project_name = parts[2];
+                    update_all_users(project_name).await;
                 }
                 "" => {
                     println!("{}Usage: melisa [options]{}", RED, RESET);

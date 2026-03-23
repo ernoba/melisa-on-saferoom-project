@@ -110,7 +110,12 @@ pub async fn delete_melisa_user(username: &str) {
 }
 
 async fn configure_sudoers(username: &str, role: UserRole) {
-    let mut commands = vec!["/usr/sbin/lxc-*"];
+    // Tambahkan git ke daftar perintah dasar agar 'melisa --update' bisa jalan
+    let mut commands = vec![
+        "/usr/sbin/lxc-*",
+        "/usr/bin/git *",
+        "/usr/sbin/git *"
+    ];
 
     match role {
         UserRole::Admin => {
@@ -124,10 +129,14 @@ async fn configure_sudoers(username: &str, role: UserRole) {
                 "/usr/bin/mkdir *"
             ]);
         },
-        UserRole::Regular => {}
+        UserRole::Regular => {
+            // Role regular sekarang mewarisi izin git di atas
+        }
     }
 
-    let sudoers_rule = format!("{} ALL=(root) NOPASSWD: {}\n", username, commands.join(", "));
+    // Perhatikan: Kita izinkan user menjalankan git sebagai DIRINYA SENDIRI (afira)
+    // agar sinkronisasi folder home tidak bermasalah dengan owner
+    let sudoers_rule = format!("{} ALL=(ALL) NOPASSWD: {}\n", username, commands.join(", "));
     let sudoers_path = format!("/etc/sudoers.d/melisa_{}", username);
 
     let mut child = Command::new("sudo")
@@ -138,7 +147,7 @@ async fn configure_sudoers(username: &str, role: UserRole) {
         .expect("Failed to spawn sudo tee");
 
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(sudoers_rule.as_bytes()).await; // Tambahkan .await
+        let _ = stdin.write_all(sudoers_rule.as_bytes()).await;
     }
     let _ = child.wait().await;
 }

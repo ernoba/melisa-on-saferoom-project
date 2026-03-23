@@ -49,6 +49,7 @@ pub async fn install() {
     setup_ssh_firewall().await;
     setup_lxc_network_quota().await;
     setup_projects_directory().await;
+    configure_git_security().await;
     fix_shared_folder_permission("data").await;
     fix_uidmap_permissions().await;
     fix_system_privacy().await;
@@ -204,30 +205,53 @@ async fn fix_shared_folder_permission(host_path: &str) {
 async fn setup_projects_directory() {
     println!("\n{}Configuring Master Projects Infrastructure...{}", BOLD, RESET);
 
-    // 1. Buat direktori utama jika belum ada
-    let mkdir_status = Command::new("sudo")
-        .args(&["mkdir", "-p", PROJECTS_MASTER])
+    // 1. Buat direktori utama (Gunakan path absolut dari konstanta)
+    let mkdir_status = Command::new("mkdir") // Hapus 'sudo' jika binary sudah running sebagai root
+        .args(&["-p", PROJECTS_MASTER])
         .status()
         .await;
 
     match mkdir_status {
         Ok(s) if s.success() => {
-            // 2. Set permission ke 755 agar folder bisa di-list oleh user (r-x) 
-            // tapi hanya root/admin yang bisa menulis (w).
-            let chmod_status = Command::new("sudo")
-                .args(&["chmod", "755", PROJECTS_MASTER])
+            // 2. Set permission ke 777 agar semua user bisa 'push' ke sini
+            // ATAU gunakan 775 jika kamu nanti pakai sistem Group
+            let chmod_status = Command::new("chmod")
+                .args(&["777", PROJECTS_MASTER])
                 .status()
                 .await;
 
             if let Ok(cs) = chmod_status {
                 if cs.success() {
-                    println!("  {:<50} [ {}OK{} ]", "Master projects directory initialized", GREEN, RESET);
+                    // 3. Tambahkan Sticky Bit (1777) agar user tidak bisa sembarang 
+                    // hapus folder project orang lain walaupun sama-sama bisa nulis.
+                    let _ = Command::new("chmod").args(&["+t", PROJECTS_MASTER]).status().await;
+                    
+                    println!("  {:<50} [ {}OK{} ]", "Master projects directory open & secured", GREEN, RESET);
                 } else {
-                    println!("  {:<50} [ {}FAILED{} ]", "Failed to set permissions for projects folder", RED, RESET);
+                    println!("  {:<50} [ {}FAILED{} ]", "Failed to set permissions", RED, RESET);
                 }
             }
         }
         _ => println!("  {:<50} [ {}FAILED{} ]", "Could not create projects directory", RED, RESET),
+    }
+}
+
+async fn configure_git_security() {
+    println!("\nConfiguring Global Git Security...");
+    
+    // Menggunakan --system agar berlaku untuk SELURUH user di server ini
+    let status = Command::new("git")
+        .args(&["config", "--system", "--add", "safe.directory", "*"])
+        .status()
+        .await;
+
+    match status {
+        Ok(s) if s.success() => {
+            println!("  {:<50} [ {}OK{} ]", "Global Git safe.directory set to '*'", GREEN, RESET);
+        }
+        _ => {
+            println!("  {:<50} [ {}FAILED{} ]", "Failed to configure Git safe directory", RED, RESET);
+        }
     }
 }
 

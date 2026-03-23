@@ -13,15 +13,21 @@ init_auth
 if [ "$#" -lt 1 ]; then
     echo -e "${BOLD}${CYAN}Melisa Remote Manager${RESET}"
     echo -e "${BOLD}Usage:${RESET} melisa <command> [args]\n"
-    echo -e "${BOLD}Authentication:${RESET}"
+    
+    echo -e "${BOLD}Project Management (Git Based):${RESET}"
+    echo "  clone <project_name>      : Unduh project penuh & history Git"
+    echo "  sync                      : Upload hanya perubahan (ringan & cepat)"
+
+    echo -e "\n${BOLD}Authentication:${RESET}"
     echo "  auth add <name> <user@ip> : Mendaftarkan server baru"
     echo "  auth switch <name>        : Ganti ke server lain"
     echo "  auth list                 : Lihat server tersimpan"
-    echo "  auth remove <name>        : Hapus server dari daftar" # <-- Tambahkan ini
+    echo "  auth remove <name>        : Hapus server dari daftar"
+    
     echo -e "\n${BOLD}Operations (pada server aktif):${RESET}"
     echo "  run <container> <file>    : Jalankan script di container"
     echo "  run-tty <cont> <file>     : Jalankan script interaktif"
-    echo "  upload <cont> <dir> <dst> : Upload folder ke container"
+    echo "  upload <cont> <dir> <dst> : Upload folder ke container (Legacy)"
     echo "  shell                     : Buka shell Melisa"
     echo "  --list / --active         : Daftar container"
     exit 1
@@ -41,9 +47,14 @@ case $COMMAND in
             *)      log_error "Usage: melisa auth [add|switch|list|remove]" ;;
         esac
         ;;
-    run) exec_run "$1" "$2" ;;
+    
+    # Tambahkan route untuk perintah baru di sini
+    clone)   exec_clone "$@" ;; # Meneruskan semua argumen (project name + flags)
+    sync)    exec_sync "$@" ;;  # Bagus untuk jaga-jaga jika sync butuh flag nanti
+    
+    run)     exec_run "$1" "$2" ;;
     run-tty) exec_run_tty "$1" "$2" ;;
-    upload) exec_upload "$1" "$2" "$3" ;;
+    upload)  exec_upload "$1" "$2" "$3" ;;
     shell) 
         ensure_connected
         log_success "Terhubung ke Melisa Shell ($CONN)..."

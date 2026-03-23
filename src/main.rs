@@ -45,15 +45,22 @@ async fn main() {
     // 2. Logika Argumen CLI
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() >= 3 && args[1] == "-c" {
-        let cmd_string = &args[2];
-        let p_info = Prompt::new();
-        
-        // Perbaikan: Tambahkan .await
-        let _ = execute_command(cmd_string, &p_info.user, &p_info.home).await;
-        exit(0); 
+    if args.len() >= 2 {
+        let cmd_string = if args.len() >= 3 && args[1] == "-c" {
+            // Jika dipanggil via SSH (e.g., melisa -c "command args")
+            args[2..].join(" ") 
+        } else {
+            // Jika dipanggil langsung dengan argumen
+            args[1..].join(" ")
+        };
+
+        if !cmd_string.is_empty() {
+            let p_info = Prompt::new();
+            let _ = execute_command(&cmd_string, &p_info.user, &p_info.home).await;
+            exit(0);
+        }
     }
-    
+
     // 3. Mode Interaktif
     display_melisa_banner();
 
