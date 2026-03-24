@@ -1,33 +1,45 @@
 #!/bin/bash
 # Melisa Client Router
 
-MELISA_LIB="$HOME/.local/share/melisa"
+# Export agar modul lain (exec.sh, auth.sh) bisa baca folder ini
+export MELISA_LIB="$HOME/.local/share/melisa"
+
+# Pengecekan Modul (Anti-Silent Fail)
+for module in "utils.sh" "auth.sh" "exec.sh"; do
+    if [ ! -f "$MELISA_LIB/$module" ]; then
+        echo -e "\e[31m[ERROR]\e[0m Modul $module hilang di $MELISA_LIB"
+        exit 1
+    fi
+done
 
 # Source Modules
 source "$MELISA_LIB/utils.sh"
 source "$MELISA_LIB/auth.sh"
 source "$MELISA_LIB/exec.sh"
 
+# Inisialisasi (Pastikan fungsi ini ada di auth.sh)
 init_auth
 
+# Tampilkan help jika tanpa argumen
 if [ "$#" -lt 1 ]; then
     echo -e "${BOLD}${CYAN}Melisa Remote Manager${RESET}"
     echo -e "${BOLD}Usage:${RESET} melisa <command> [args]\n"
-    
-    echo -e "${BOLD}Project Management (Git Based):${RESET}"
-    echo "  clone <project_name>      : Unduh project penuh & history Git"
-    echo "  sync                      : Upload hanya perubahan (ringan & cepat)"
 
-    echo -e "\n${BOLD}Authentication:${RESET}"
+    echo -e "${BOLD}Authentication:${RESET}"
     echo "  auth add <name> <user@ip> : Mendaftarkan server baru"
     echo "  auth switch <name>        : Ganti ke server lain"
     echo "  auth list                 : Lihat server tersimpan"
-    echo "  auth remove <name>        : Hapus server dari daftar"
-    
+    echo "  auth remove <name>        : Hapus server dari daftar" # <-- Tambahkan ini
+
+    echo -e "\n${BOLD}Project Management:${RESET}"
+    echo "  clone <name> [--force]    : Unduh project"
+    echo "  sync                      : Push perubahan"
+    echo "  get <name> [--force]      : Pull data terbaru"
+
     echo -e "\n${BOLD}Operations (pada server aktif):${RESET}"
     echo "  run <container> <file>    : Jalankan script di container"
     echo "  run-tty <cont> <file>     : Jalankan script interaktif"
-    echo "  upload <cont> <dir> <dst> : Upload folder ke container (Legacy)"
+    echo "  upload <cont> <dir> <dst> : Upload folder ke container"
     echo "  shell                     : Buka shell Melisa"
     echo "  --list / --active         : Daftar container"
     exit 1
@@ -48,17 +60,17 @@ case $COMMAND in
         esac
         ;;
     
-    # Tambahkan route untuk perintah baru di sini
-    clone)   exec_clone "$@" ;; # Meneruskan semua argumen (project name + flags)
-    sync)    exec_sync "$@" ;;  # Bagus untuk jaga-jaga jika sync butuh flag nanti
+    clone)   exec_clone "$@" ;; 
+    sync)    exec_sync "$@" ;;  
+    get)     exec_get "$@" ;;
     
     run)     exec_run "$1" "$2" ;;
     run-tty) exec_run_tty "$1" "$2" ;;
     upload)  exec_upload "$1" "$2" "$3" ;;
     shell) 
         ensure_connected
-        log_success "Terhubung ke Melisa Shell ($CONN)..."
-        ssh "$CONN" 
+        log_success "Terhubung ke $CONN..."
+        ssh -t "$CONN" 
         ;;
     *) exec_forward "$COMMAND" "$@" ;;
 esac

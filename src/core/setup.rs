@@ -9,7 +9,7 @@ use crate::cli::color_text::{GREEN, RED, CYAN, BOLD, RESET};
 use crate::core::project_management::PROJECTS_MASTER;
 
 pub async fn install() {
-    // Check root (biasanya sync tidak apa-apa, tapi kita ikuti alur async)
+    // 1. Verifikasi Hak Akses & Keamanan Sesi
     if !check_root() {
         eprintln!("{}[ERROR] Setup harus dijalankan dengan hak akses root (Gunakan sudo).{}", RED, RESET);
         std::process::exit(1);
@@ -23,10 +23,10 @@ pub async fn install() {
 
     println!("\n{}MELISA SYSTEM & LXC INITIALIZATION (HOST MODE){}\n", BOLD, RESET);
 
-    // 1. Verifikasi Lingkungan
+    // 2. Verifikasi Lingkungan Lokal
     verify_data_environment().await;
 
-    // 2. Instalasi Paket (Async Loop)
+    // 3. Instalasi Paket (Daftar perintah sistem)
     let commands = vec![
         ("Synchronizing package repositories", "dnf", vec!["update", "-y"]),
         ("Installing Virtualization & Bridge tools", "dnf", vec!["install", "-y", "lxc", "lxc-templates", "libvirt", "bridge-utils"]),
@@ -42,10 +42,8 @@ pub async fn install() {
         }
     }
 
-    // 3. Deployment Binary
+    // 4. Deployment & Konfigurasi Infrastruktur
     deploy_melisa_binary().await;
-
-    // 4. Konfigurasi Jaringan & Keamanan
     setup_ssh_firewall().await;
     setup_lxc_network_quota().await;
     setup_projects_directory().await;
@@ -54,11 +52,12 @@ pub async fn install() {
     fix_uidmap_permissions().await;
     fix_system_privacy().await;
 
+    // Mapping SubUID/SubGID untuk user yang menjalankan sudo
     if let Ok(user) = std::env::var("SUDO_USER") {
         setup_user_mapping(&user).await;
     }
 
-    // 5. Registrasi Shell & Sudoers
+    // 5. Finalisasi Shell
     register_melisa_shell().await;
     configure_sudoers_access().await;
 
@@ -70,12 +69,11 @@ pub async fn install() {
 }
 
 async fn execute_step(description: &str, program: &str, args: &[&str]) -> bool {
-    println!("{} {}...", BOLD, description); // Ubah ke println agar lebih jelas
+    println!("{} {}...", BOLD, description);
     let _ = io::stdout().flush().await;
 
     let status = Command::new(program)
         .args(args)
-        // Ganti null dengan inherit agar output dnf/systemctl terlihat
         .stdout(Stdio::inherit()) 
         .stderr(Stdio::inherit())
         .status()
@@ -100,7 +98,7 @@ async fn verify_data_environment() {
     if data_path.exists() {
         if let Ok(abs_path) = fs::canonicalize(data_path).await {
             println!("  {:<50} [ {}FOUND{} ]", "Data directory already exists", CYAN, RESET);
-            println!("  {}Location: {}{}", BOLD, abs_path.display(), RESET); // Gunakan di sini
+            println!("  {}Location: {}{}", BOLD, abs_path.display(), RESET);
             
             println!("  {}Contents:{}", BOLD, RESET);
             if let Ok(mut entries) = fs::read_dir(data_path).await {
@@ -138,9 +136,10 @@ async fn deploy_melisa_binary() {
 
     if let Ok(s) = status {
         if s.success() {
+            // Set root ownership dan aktifkan SUID bit (4755)
             let _ = Command::new("chown").args(&["root:root", target_path]).status().await;
             let _ = Command::new("chmod").args(&["4755", target_path]).status().await;
-            println!("  {:<50} [ {}UPDATED{} ]", "New version deployed", GREEN, RESET);
+            println!("  {:<50} [ {}UPDATED{} ]", "New version deployed (SUID set)", GREEN, RESET);
         }
     }
 }
@@ -198,34 +197,29 @@ async fn fix_uidmap_permissions() {
 }
 
 async fn fix_shared_folder_permission(host_path: &str) {
+    // Gunakan UID/GID 100000 untuk mapping unprivileged LXC
     let _ = Command::new("chown").args(&["-R", "100000:100000", host_path]).status().await;
 }
 
-// Tambahkan fungsi ini di src/core/setup.rs
 async fn setup_projects_directory() {
     println!("\n{}Configuring Master Projects Infrastructure...{}", BOLD, RESET);
 
-    // 1. Buat direktori utama (Gunakan path absolut dari konstanta)
-    let mkdir_status = Command::new("mkdir") // Hapus 'sudo' jika binary sudah running sebagai root
+    let mkdir_status = Command::new("mkdir")
         .args(&["-p", PROJECTS_MASTER])
         .status()
         .await;
 
     match mkdir_status {
         Ok(s) if s.success() => {
-            // 2. Set permission ke 777 agar semua user bisa 'push' ke sini
-            // ATAU gunakan 775 jika kamu nanti pakai sistem Group
+            // Gunakan 1777 (Sticky Bit). 
+            // Semua user bisa buat folder, tapi tidak bisa hapus folder orang lain.
             let chmod_status = Command::new("chmod")
-                .args(&["777", PROJECTS_MASTER])
+                .args(&["1777", PROJECTS_MASTER])
                 .status()
                 .await;
 
             if let Ok(cs) = chmod_status {
                 if cs.success() {
-                    // 3. Tambahkan Sticky Bit (1777) agar user tidak bisa sembarang 
-                    // hapus folder project orang lain walaupun sama-sama bisa nulis.
-                    let _ = Command::new("chmod").args(&["+t", PROJECTS_MASTER]).status().await;
-                    
                     println!("  {:<50} [ {}OK{} ]", "Master projects directory open & secured", GREEN, RESET);
                 } else {
                     println!("  {:<50} [ {}FAILED{} ]", "Failed to set permissions", RED, RESET);
@@ -239,7 +233,7 @@ async fn setup_projects_directory() {
 async fn configure_git_security() {
     println!("\nConfiguring Global Git Security...");
     
-    // Menggunakan --system agar berlaku untuk SELURUH user di server ini
+    // --system agar konfigurasi ini tidak hilang saat user berganti
     let status = Command::new("git")
         .args(&["config", "--system", "--add", "safe.directory", "*"])
         .status()
@@ -255,15 +249,15 @@ async fn configure_git_security() {
     }
 }
 
-// Di src/core/setup.rs
 async fn fix_system_privacy() {
     println!("\nHardening System Privacy...");
-    // Menghapus izin baca (r) pada /home agar user tidak bisa 'ls /home'
-    let _ = Command::new("sudo").args(&["chmod", "711", "/home"]).status().await;
+    // 711 pada /home mencegah user biasa melakukan 'ls /home' untuk melihat daftar user lain
+    let _ = Command::new("chmod").args(&["711", "/home"]).status().await;
     println!("  {:<50} [ {}OK{} ]", "Directory /home is now unlistable", GREEN, RESET);
 }
 
 async fn setup_user_mapping(username: &str) {
+    // Memberikan rentang UID/GID untuk subordinasi LXC
     let _ = Command::new("usermod")
         .args(&["--add-subuids", "100000-165535", "--add-subgids", "100000-165535", username])
         .status().await;

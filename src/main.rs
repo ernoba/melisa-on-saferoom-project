@@ -16,6 +16,10 @@ use cli::prompt::Prompt;
 use cli::executor::execute_command;
 use core::root_check::check_root;
 
+// get metadata Cargo.toml
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
+
 #[tokio::main] 
 async fn main() {
     // 1. Pengecekan Root & Eskalasi

@@ -1,6 +1,8 @@
 [package]
-name = "saferoom"
+name = "melisa"
 version = "0.1.0"
+authors = ["Erick Adriano Sebastian <ernobaproject@gmail.com>"]
+description = "Management Environment Linux Sandbox"
 edition = "2024"
 
 [dependencies]

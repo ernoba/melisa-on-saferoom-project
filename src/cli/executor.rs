@@ -13,6 +13,7 @@ use crate::core::user_management::{
     list_melisa_users, upgrade_user, clean_orphaned_sudoers
 };
 use crate::core::project_management::{PROJECTS_MASTER, delete_project, invite, list_projects, new_project, out_user, pull, update_project, update_all_users};
+use crate::core::metadata::print_version;
 
 pub enum ExecResult {
     Continue,
@@ -32,42 +33,51 @@ pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult 
 
             match sub_cmd {
                 "--help" | "-h" => {
-                    if !admin_check().await {
-                        println!("{}Usage: melisa [options]{}", BOLD, RESET);
-                        println!("Options:");
-                        println!("  --help             Show this help message");
-                        println!("  --run <name>       Run a command inside a container");
+                    let is_admin = admin_check().await;
+                    
+                    println!("\n{}MELISA CONTROL INTERFACE - VERSION 3.0.0{}", BOLD, RESET);
+                    println!("Usage: melisa [options]\n");
 
-                     }// Gerbang Keamanan
-                     else {
-                        println!("{}Usage: melisa [options]{}", BOLD, RESET);
-                        println!("Options:");
-                        println!("  --help             Show this help message");
-                        println!("  --setup            Setup LXC environment (install dependencies, etc.)");
-                        println!("  --clear            Clear history data/history.txt");
-                        println!("  --search <keyword> Search available LXC distros by keyword");
-                        println!("  --create <name> <distro_code>  Create a new LXC container");
-                        println!("  --delete <name>    Delete an existing LXC container");
-                        println!("  --run <name>       Run a command inside a container");
-                        println!("  --use <name>       Attach to a container interactively");
-                        println!("  --stop <name>      Stop a running container");
-                        println!("  --list             List all containers");
-                        println!("  --active           List only active (running) containers");
-                        println!("  --add <user>       Add a user to Melisa access list");
-                        println!("  --remove <user>    Remove a user from Melisa access list");
-                        println!("  --users            List all users with Melisa access");
-                        println!("  --upgrade <user>   Upgrade a user's permissions (e.g., to sudo)");
-                        println!("  --new_project <name>  Create a new master project (Admin only)");
-                        println!("  --delete_project <name> remove your project");
-                        println!("  --invite <project> <user1> <user2> ...  Invite users to a project (Admin only)");
-                        println!("  --out <project> <user1> <user2> ...  Out users from project");
-                        println!("  --projects         Show all projects");
-                        println!("  --pull <from_user> <project_name>  merge code from user to master");
-                        println!("  --clean            Clean orphaned sudoers files for non-existent users");
-                        println!("  --upload <name> <dest_path>  Upload a file to a container");
-                        println!("  --share <name> <host_path> <cont_path>  Share a folder between host and container");
-                        println!("  --reshare <name> <host_path> <cont_path>  Remove a shared folder between host and container");
-                     }
+                    println!("{}GENERAL COMMANDS{}", BOLD, RESET);
+                    println!("  --help, -h             Display this comprehensive help manual");
+                    println!("  --version              get project information");
+                    println!("  --projects             List all master projects associated with your account");
+                    println!("  --update <project>     Synchronize project workdir via force-reset (overwrites local)");
+                    println!("  --list                 List all LXC containers provisioned to your UID");
+                    println!("  --active               Filter and display only running LXC containers");
+                    println!("  --run <name>           Initiate the startup sequence for a specific container");
+                    println!("  --stop <name>          Gracefully terminate a running container session");
+                    println!("  --use <name>           Execute an interactive TTY session (shell attach)");
+                    println!("  --send <name> <cmd>    Dispatch a non-interactive command to a container");
+                    println!("  --upload <name> <dest> Upload local artifacts to a container destination");
+
+                    if is_admin {
+                        println!("\n{}ADMINISTRATION & INFRASTRUCTURE{}", BOLD, RESET);
+                        println!("  --setup                Execute host-level environment initialization");
+                        println!("  --clear                Purge the internal command history buffer");
+                        println!("  --clean                Prune orphaned sudoers configurations");
+                        println!("  --search <keyword>     Query remote repositories for validated LXC distributions");
+                        println!("  --create <name> <code> Provision a new container from a specific distribution");
+                        println!("  --delete <name>        Decommission and purge a container (requires confirmation)");
+                        println!("  --share <n> <h> <c>    Mount a host directory into a container namespace");
+                        println!("  --reshare <n> <h> <c>  Unmount a host directory from a container namespace");
+
+                        println!("\n{}IDENTITY & ACCESS MANAGEMENT{}", BOLD, RESET);
+                        println!("  --user                 Enumerate all registered Melisa system identities");
+                        println!("  --add <user>           Provision a new user with Melisa-restricted shell");
+                        println!("  --remove <user>        De-provision a user and revoke system permissions");
+                        println!("  --upgrade <user>       Elevate a user to administrative privileges");
+                        println!("  --passwd <user>        Update the authentication credentials for a user");
+
+                        println!("\n{}PROJECT ORCHESTRATION{}", BOLD, RESET);
+                        println!("  --new_project <name>   Initialize a new master git repository in root storage");
+                        println!("  --delete_project <n>   Decommission a project and purge all associated user workdirs");
+                        println!("  --invite <p> <u..>     Grant project access to specified system users");
+                        println!("  --out <p> <u..>        Revoke project access from specified system users");
+                        println!("  --pull <user> <proj>   Merge and synchronize code from a user workdir to master");
+                        println!("  --update-all <proj>    Force-propagate master updates to all project members");
+                    }
+                    println!("\n{}Note: All system-level modifications require appropriate SUID elevation.{}", BOLD, RESET);
                 },
                 "--setup" => {
                     install().await;
@@ -79,6 +89,9 @@ pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult 
                         return ExecResult::Continue;
                     }
                     return ExecResult::ResetHistory
+                },
+                "--version" => {
+                    print_version().await;
                 },
                 "--search" => {
                     let keyword = parts.get(2).unwrap_or(&"").to_lowercase();

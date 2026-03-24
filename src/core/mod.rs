@@ -3,3 +3,4 @@ pub mod root_check;
 pub mod container;
 pub mod setup;
 pub mod project_management;
+pub mod metadata;

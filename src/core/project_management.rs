@@ -10,26 +10,32 @@ pub async fn new_project(project_name: &str) {
     
     let _ = tokio::fs::create_dir_all(&master_path).await;
 
-    // 1. Inisialisasi Bare Repo
+    // 1. Inisialisasi Bare Repo dengan mode Shared Group
+    // Kita gunakan --shared=group agar folder otomatis bisa ditulis oleh grup yang sama
     let _ = Command::new("git")
-        .args(&["init", "--bare", "--shared", &master_path])
+        .args(&["init", "--bare", "--shared=group", &master_path])
         .status().await;
 
     // --- UPGRADE: REGISTER SAFE DIRECTORY ---
-    // Agar Git tidak menganggap folder ini "dubious" saat diakses user non-root
     let _ = Command::new("git")
         .args(&["config", "--system", "--add", "safe.directory", &master_path])
         .status().await;
 
-    // --- UPGRADE: PERMISSION 777 ---
-    // Kita berikan 777 pada Bare Repo agar 'git-receive-pack' bisa membuat folder temporary 
-    // saat ada user yang melakukan push (Solusi Unpacker Error)
-    let _ = Command::new("chmod").args(&["-R", "777", &master_path]).status().await;
+    // --- UPGRADE: PERMISSION & GROUP ---
+    // Pastikan folder dimiliki grup 'melisa' (pastikan grup ini sudah ada di sistem)
+    // Gunakan 2775 agar file baru di dalam repo mewarisi grup induk (SetGID)
+    let _ = Command::new("chown").args(&["-R", "root:melisa", &master_path]).status().await;
+    let _ = Command::new("chmod").args(&["-R", "2775", &master_path]).status().await;
+    
+    // Konfigurasi tambahan agar git mengizinkan penulisan grup
+    let _ = Command::new("git")
+        .args(&["-C", &master_path, "config", "core.sharedRepository", "group"])
+        .status().await;
 
     // 2. Setup Hook
-    // 2. Setup Hook
     let hook_path = format!("{}/hooks/post-receive", master_path);
-    let hook_content = format!("#!/bin/bash\nmelisa --update-all {}", project_name); 
+    // Gunakan sudo agar hook yang dipicu user biasa bisa menjalankan update-all sebagai root
+    let hook_content = format!("#!/bin/bash\nsudo melisa --update-all {}", project_name); 
     let _ = tokio::fs::write(&hook_path, hook_content).await;
     let _ = Command::new("chmod").args(&["+x", &hook_path]).status().await;
 
@@ -54,11 +60,11 @@ pub async fn invite(project_name: &str, invited_users: &[&str]) {
 
         match clone_status {
             Ok(s) if s.success() => {
+                // Pastikan user adalah pemilik folder setelah clone
+                let _ = Command::new("chown").args(&["-R", &format!("{}:{}", username, username), &user_project_path]).status().await;
                 println!("{}[INVITED]{} User '{}' berhasil disiapkan.", GREEN, RESET, username);
             }
             _ => {
-                // Jika clone gagal (biasanya karena repo master masih kosong/empty)
-                // Kita buatkan folder manual dan inisialisasi remote-nya
                 let _ = Command::new("sudo").args(&["-u", username, "mkdir", "-p", &user_project_path]).status().await;
                 let _ = Command::new("sudo").args(&["-u", username, "git", "-C", &user_project_path, "init"]).status().await;
                 let _ = Command::new("sudo").args(&["-u", username, "git", "-C", &user_project_path, "remote", "add", "origin", &master_path]).status().await;
@@ -69,21 +75,19 @@ pub async fn invite(project_name: &str, invited_users: &[&str]) {
     }
 }
 
-// melisa --pull my-web afira
 pub async fn pull(username: &str, project_name: &str) {
     let user_path = format!("/home/{}/{}", username, project_name);
 
-    // UPGRADE: Deteksi branch aktif di folder user secara otomatis
-    let branch_out = Command::new("git")
-        .current_dir(&user_path)
-        .args(&["branch", "--show-current"])
+    // Jalankan deteksi branch sebagai user tersebut agar tidak ada masalah permission .git
+    let branch_out = Command::new("sudo")
+        .args(&["-u", username, "git", "-C", &user_path, "branch", "--show-current"])
         .output().await;
     
-    let branch = String::from_utf8_lossy(&branch_out.map(|o| o.stdout).unwrap_or_default())
+    let branch = String::from_utf8_lossy(&branch_out.as_ref().map(|o| o.stdout.clone()).unwrap_or_default())
         .trim().to_string();
     let branch = if branch.is_empty() { "master".to_string() } else { branch };
 
-    // 1. Git add & commit (dilakukan sebagai user tersebut)
+    // 1. Git add & commit
     let _ = Command::new("sudo").args(&["-u", username, "git", "-C", &user_path, "add", "."]).status().await;
     let _ = Command::new("sudo").args(&["-u", username, "git", "-C", &user_path, "commit", "-m", "Auto-sync by MELISA"]).status().await;
 
@@ -100,11 +104,10 @@ pub async fn pull(username: &str, project_name: &str) {
 }
 
 pub async fn list_projects(home: &str) {
-    let is_admin = admin_check().await; //
+    let is_admin = admin_check().await; 
     println!("{}--- MELISA PROJECT DASHBOARD ---{}", BOLD, RESET);
 
     if is_admin {
-        // Logika Admin: Melihat semua Master Project di Root
         let output = Command::new("ls")
             .args(&["-1", PROJECTS_MASTER])
             .output().await;
@@ -124,8 +127,6 @@ pub async fn list_projects(home: &str) {
             _ => eprintln!("{}[ERROR]{} Gagal mengakses direktori master.", RED, RESET),
         }
     } else {
-        // Logika User Reguler: Melihat project di folder Home mereka
-        // Kita tampilkan folder di HOME kecuali folder sistem 'data'
         let output = Command::new("ls")
             .args(&["-F", home]) 
             .output().await;
@@ -136,7 +137,6 @@ pub async fn list_projects(home: &str) {
             
             println!("{}Your Active Projects (Branches):{}", BOLD, RESET);
             for entry in list.lines() {
-                // Filter: Hanya tampilkan folder (akhiran /) dan bukan folder sistem 'data/'
                 if entry.ends_with('/') && entry != "data/" {
                     println!("  {} [BRANCH] {}{}", BLUE, entry.trim_end_matches('/'), RESET);
                     found = true;
@@ -151,10 +151,8 @@ pub async fn list_projects(home: &str) {
 }
 
 pub async fn delete_project(master_path: String, project_name: &str) {
-    // 2. Hapus Master Project (Root)
     let _ = Command::new("rm").args(&["-rf", &master_path]).status().await;
 
-    // 3. Hapus otomatis dari SEMUA user yang terdaftar di Melisa
     let passwd_out = Command::new("grep")
         .args(&["/usr/local/bin/melisa", "/etc/passwd"])
         .output().await;
@@ -164,7 +162,6 @@ pub async fn delete_project(master_path: String, project_name: &str) {
         for line in result.lines() {
             if let Some(username) = line.split(':').next() {
                 let user_project_path = format!("/home/{}/{}", username, project_name);
-                // Hapus folder project di home user jika ada
                 let _ = Command::new("rm").args(&["-rf", &user_project_path]).status().await;
                 println!("{} telah di hapus dari {}", project_name, username);
             }
@@ -176,8 +173,6 @@ pub async fn delete_project(master_path: String, project_name: &str) {
 pub async fn out_user(targets: &[&str], project_name: &str) {
     for username in targets {
         let user_project_path = format!("/home/{}/{}", username, project_name);
-        
-        // Eksekusi penghapusan folder di home user tersebut
         let status = Command::new("rm").args(&["-rf", &user_project_path]).status().await;
 
         match status {
@@ -193,13 +188,11 @@ pub async fn update_project(username: &str, project_name: &str, _force: bool) {
     let user_path = format!("/home/{}/{}", username, project_name);
     let git_path = format!("{}/.git", user_path);
 
-    // 1. Validasi keberadaan Repo
     if !std::path::Path::new(&git_path).exists() {
         eprintln!("{}[ERROR]{} Path '{}' bukan repository Git!", RED, RESET, user_path);
         return;
     }
 
-    // 2. Deteksi branch secara otomatis
     let branch_out = Command::new("sudo")
         .args(&["-u", username, "git", "-C", &user_path, "branch", "--show-current"])
         .output().await;
@@ -210,24 +203,22 @@ pub async fn update_project(username: &str, project_name: &str, _force: bool) {
 
     println!("{}[INFO]{} Sinkronisasi fisik project '{}' (Branch: {})...", BLUE, RESET, project_name, branch);
 
-    // --- FIX: KEMBALIKAN OWNERSHIP KE USER ---
-    // Pastikan user adalah pemilik sah dari seluruh file di folder project-nya 
-    // agar Git tidak kena 'Permission denied' saat reset/clean.
+    // Kembalikan ownership agar user bisa memanipulasi file saat git reset
     let _ = Command::new("sudo")
         .args(&["chown", "-R", &format!("{}:{}", username, username), &user_path])
         .status().await;
 
-    // 3. MEMBERSIHKAN HAMBATAN (PENTING!)
+    // Bersihkan file yang tidak terlacak agar tidak konflik
     let _ = Command::new("sudo")
         .args(&["-u", username, "git", "-C", &user_path, "clean", "-fd"])
         .status().await;
 
-    // 4. AMBIL DATA TERBARU (FETCH)
+    // Ambil data terbaru dari master
     let _ = Command::new("sudo")
         .args(&["-u", username, "git", "-C", &user_path, "fetch", "origin"])
         .status().await;
 
-    // 5. PAKSA UPDATE (RESET --HARD)
+    // Paksa update ke kondisi master terbaru
     let status = Command::new("sudo")
         .args(&["-u", username, "git", "-C", &user_path, "reset", "--hard", &format!("origin/{}", branch)])
         .status().await;
@@ -236,11 +227,11 @@ pub async fn update_project(username: &str, project_name: &str, _force: bool) {
         Ok(s) if s.success() => {
             println!("{}[SUCCESS]{} Project '{}' berhasil diperbarui sepenuhnya.", GREEN, RESET, project_name);
             
-            // Opsional: Karena tadi kita chown semuanya ke user, kita perlu pastikan
-            // folder storage Laravel tetap bisa diakses web server (jika diperlukan)
+            // Pengaturan khusus untuk folder storage (Laravel) jika ada
             let storage_path = format!("{}/kasirku/storage", user_path);
             if std::path::Path::new(&storage_path).exists() {
                 let _ = Command::new("sudo").args(&["chmod", "-R", "775", &storage_path]).status().await;
+                let _ = Command::new("sudo").args(&["chown", "-R", &format!("{}:www-data", username), &storage_path]).status().await;
             }
         },
         _ => eprintln!("{}[ERROR]{} Gagal sinkronisasi fisik di server.", RED, RESET),
@@ -248,7 +239,6 @@ pub async fn update_project(username: &str, project_name: &str, _force: bool) {
 }
 
 pub async fn update_all_users(project_name: &str) {
-    // 1. Ambil semua user yang pakai shell melisa
     let output = Command::new("grep")
         .args(&["/usr/local/bin/melisa", "/etc/passwd"])
         .output().await;
@@ -259,10 +249,7 @@ pub async fn update_all_users(project_name: &str) {
             if let Some(username) = line.split(':').next() {
                 let user_project_path = format!("/home/{}/{}", username, project_name);
                 
-                // --- FIX: Pengecekan Eksistensi Folder ---
-                // Hanya jalankan update jika folder project ADA di home user tersebut
                 if std::path::Path::new(&user_project_path).exists() {
-                    // Jalankan update dengan force = true agar file untracked (.env) tertimpa
                     update_project(username, project_name, true).await;
                 }
             }
