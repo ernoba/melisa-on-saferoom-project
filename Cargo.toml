@@ -22,3 +22,10 @@ tokio = { version = "1.50.0", features = ["full"] }
 uuid = { version = "1.0", features = ["v4"] }
 tracing = "0.1.44"
 thiserror = "2.0"  # Versi terbaru biar aman
+
+[profile.release]
+opt-level = 'z'     # Optimasi untuk ukuran (bukan kecepatan)
+lto = true          # Link Time Optimization (menghapus kode yang tidak terpakai)
+codegen-units = 1   # Mengurangi paralelisasi untuk optimasi lebih baik
+panic = 'abort'     # Menghapus logika unwinding saat panic
+strip = true        # Otomatis menghapus simbol debug dari biner

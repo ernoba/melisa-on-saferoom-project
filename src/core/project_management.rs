@@ -237,11 +237,19 @@ pub async fn out_user(targets: &[&str], project_name: &str) {
 /// Forcefully syncs a user's local workspace with the latest state of the master repository.
 /// Typically triggered by the post-receive hook.
 pub async fn update_project(username: &str, project_name: &str, _force: bool) {
-    let user_path = format!("/home/{}/{}", username, project_name);
-    let git_path = format!("{}/.git", user_path);
+    // 1. Validate inputs to prevent path traversal (e.g., input like "../../../etc")
+    if username.contains('/') || username.contains("..") || project_name.contains('/') || project_name.contains("..") {
+        eprintln!("{}[ERROR]{} Invalid characters detected in input. Sync aborted.", RED, RESET);
+        return;
+    }
+
+    // Use PathBuf for safe path handling
+    let base_path = Path::new("/home").join(username).join(project_name);
+    let user_path = base_path.to_str().unwrap_or_default().to_string();
+    let git_path = base_path.join(".git");
 
     // Validate that the target directory is an actual Git repository
-    if !Path::new(&git_path).exists() {
+    if !git_path.exists() {
         eprintln!("{}[ERROR]{} Target path '{}' is not a valid Git repository. Sync aborted.", RED, RESET, user_path);
         return;
     }
@@ -281,12 +289,22 @@ pub async fn update_project(username: &str, project_name: &str, _force: bool) {
         Ok(s) if s.success() => {
             println!("{}[SUCCESS]{} Project '{}' successfully synchronized to the latest master state.", GREEN, RESET, project_name);
             
-            // FRAMEWORK SPECIFIC HANDLING: Laravel Storage Permissions
-            // Ensures the web server (www-data) retains write access to cache and logs after a hard reset
-            let storage_path = format!("{}/kasirku/storage", user_path);
-            if Path::new(&storage_path).exists() {
-                let _ = Command::new("sudo").args(&["chmod", "-R", "775", &storage_path]).status().await;
-                let _ = Command::new("sudo").args(&["chown", "-R", &format!("{}:www-data", username), &storage_path]).status().await;
+            // SECURITY FIX: Remove "kasirku" and handle the generic storage path
+            let storage_path = base_path.join("storage");
+            
+            if storage_path.exists() {
+                // IMPORTANT: Verify that 'storage' is a real directory, NOT a symlink.
+                // This prevents users from linking 'storage' to /etc/shadow or other system files.
+                if let Ok(meta) = std::fs::symlink_metadata(&storage_path) {
+                    if meta.file_type().is_symlink() {
+                        eprintln!("{}[ERROR]{} Security risk detected: 'storage' is a symlink. Permission patch aborted.", RED, RESET);
+                        return;
+                    }
+                }
+
+                let storage_path_str = storage_path.to_str().unwrap_or_default();
+                let _ = Command::new("sudo").args(&["chmod", "-R", "775", storage_path_str]).status().await;
+                let _ = Command::new("sudo").args(&["chown", "-R", &format!("{}:www-data", username), storage_path_str]).status().await;
                 println!("{}[PATCH]{} Restored Laravel storage permissions.", YELLOW, RESET);
             }
         },
