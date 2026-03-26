@@ -279,7 +279,7 @@ MELISA uses seven layers of security:
 6. **LXC Namespace Isolation** — Container root (UID 0) maps to unprivileged UID 100000 on the host
 7. **History Security** — TOCTOU-safe purge, `0600` permissions on history files
 
-See [Security Model](.src/doc/src/concepts/security-model.md) for full details.
+See [Security Model](.blob/master/doc/src/security.md) for full details.
 
 ---
 
