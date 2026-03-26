@@ -35,9 +35,13 @@ mkdir -p ~/.local/bin
 mkdir -p ~/.local/share/melisa
 mkdir -p ~/.config/melisa
 
+# 2.5 Resolve Potential Permission Conflicts (Auto-Fix)
+# Reclaim ownership of target directories just in case they were locked by root previously
+echo -e "  [+] Sanitizing directory ownership (sudo may prompt for password)..."
+sudo chown -R "$USER":"$USER" ~/.local/bin ~/.local/share/melisa ~/.config/melisa
+
 # 3. Deploy Source Files
 echo -e "  [+] Deploying core binaries and modules..."
-
 
 # Validate that the main executable exists before attempting to copy
 if [ ! -f "$SRC_DIR/melisa" ]; then
@@ -45,13 +49,27 @@ if [ ! -f "$SRC_DIR/melisa" ]; then
     exit 1
 fi
 
-cp "$SRC_DIR/melisa" ~/.local/bin/melisa
-# Copy all shell modules, redirecting stderr to null if none exist to avoid ugly errors
-cp "$SRC_DIR/"*.sh ~/.local/share/melisa/ 2>/dev/null || echo -e "  ${YELLOW}[WARN] No supplementary .sh modules found to copy.${RESET}"
+cp -f "$SRC_DIR/melisa" ~/.local/bin/melisa
+
+# [CRITICAL FIX]: Safe Iteration for .sh modules without hiding errors
+SH_FOUND=false
+for file in "$SRC_DIR"/*.sh; do
+    # Check if the glob actually matched a file
+    if [ -f "$file" ]; then
+        SH_FOUND=true
+        # Explicitly copy and catch error without hiding stderr
+        cp -f "$file" ~/.local/share/melisa/ || echo -e "  ${RED}[ERROR] Failed to copy $(basename "$file"). Check folder permissions!${RESET}"
+    fi
+done
+
+if [ "$SH_FOUND" = false ]; then
+    echo -e "  ${YELLOW}[WARN] No supplementary .sh modules found to copy.${RESET}"
+fi
 
 # 4. Enforce Execution Permissions
 echo -e "  [+] Setting strict execution permissions..."
 chmod +x ~/.local/bin/melisa
+chmod +x ~/.local/share/melisa/*.sh 2>/dev/null || true # Ensure modules are executable too
 
 # 5. Dynamic PATH Registration (Multi-Shell Support)
 echo -e "  [+] Verifying PATH environment variables..."
@@ -70,7 +88,7 @@ RELOAD_NEEDED=false
 
 # Check if ~/.local/bin is already present in the system PATH
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    # [CRITICAL FIX]: Check if the export command already exists in the file to prevent duplicates
+    # Check if the export command already exists in the file to prevent duplicates
     if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$SHELL_RC" 2>/dev/null; then
         echo -e "  ${YELLOW}[INFO] Registering ~/.local/bin to your PATH in $(basename "$SHELL_RC")...${RESET}"
         echo -e '\n# MELISA Client Environment' >> "$SHELL_RC"

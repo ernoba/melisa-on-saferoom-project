@@ -187,7 +187,9 @@ pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult 
                         std::io::stdout().flush().expect("Failed to flush stdout");
 
                         let mut confirmation = String::new();
-                        let mut reader = io::BufReader::new(io::stdin());
+                        // [CRITICAL FIX]: Upgraded to tokio::io::stdin() for asynchronous reading
+                        let stdin = io::stdin();
+                        let mut reader = io::BufReader::new(stdin);
                         
                         // 3. Await user input
                         if let Ok(_) = reader.read_line(&mut confirmation).await {
@@ -317,7 +319,9 @@ pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult 
                         std::io::stdout().flush().expect("Failed to flush stdout"); 
 
                         let mut conf = String::new();
-                        let mut reader = io::BufReader::new(io::stdin());
+                        // [CRITICAL FIX]: Upgraded to tokio::io::stdin() for asynchronous reading
+                        let stdin = io::stdin();
+                        let mut reader = io::BufReader::new(stdin);
                         
                         if let Ok(_) = reader.read_line(&mut conf).await {
                             let input = conf.trim().to_lowercase();
