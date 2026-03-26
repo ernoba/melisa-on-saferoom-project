@@ -82,7 +82,7 @@ pub async fn get_lxc_distro_list() -> (Vec<DistroMetadata>, bool) {
 
     let result = match output {
         // [CRITICAL FIX]: Check if stdout contains "Distribution" instead of strictly relying on exit code 0
-        Ok(out) if out.status.success() || (!out.stdout.is_empty() && String::from_utf8_lossy(&out.stdout).contains("Distribution")) => {
+        Ok(out) if out.status.success() || (!out.stdout.is_empty() && (String::from_utf8_lossy(&out.stdout).contains("Distribution") || String::from_utf8_lossy(&out.stdout).contains("DIST"))) => {
             let content = String::from_utf8_lossy(&out.stdout);
             if !content.is_empty() {
                 let _ = fs::write(GLOBAL_CACHE, content.to_string()).await;
@@ -115,7 +115,7 @@ pub async fn get_lxc_distro_list() -> (Vec<DistroMetadata>, bool) {
                 
                 // [CRITICAL FIX]: lxc-create will always return Exit Code 1 here because no container is generated.
                 // We MUST intercept the stdout stream and look for the data directly!
-                if !content.is_empty() && content.contains("Distribution") {
+                if !content.is_empty() && (content.contains("Distribution") || content.contains("DIST")) {
                     let _ = fs::write(GLOBAL_CACHE, content.to_string()).await;
                     let _ = Command::new("sudo").args(&["chmod", "666", GLOBAL_CACHE]).status().await;
                     final_result = (parse_distro_list(&content), false);
@@ -165,7 +165,7 @@ fn parse_distro_list(content: &str) -> Vec<DistroMetadata> {
         let p: Vec<&str> = line.split_whitespace().collect();
         
         // Filter out headers and separator lines from the lxc output
-        if p.len() >= 4 && !line.contains("Distribution") && !line.contains("---") {
+        if p.len() >= 4 && !line.contains("Distribution") && !line.contains("DIST") && !line.contains("---") {
             let name = p[0].to_string();
             let release = p[1].to_string();
             let arch = p[2].to_string();
