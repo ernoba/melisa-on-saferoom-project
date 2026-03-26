@@ -50,6 +50,20 @@ get_active_conn() {
     echo "$conn"
 }
 
+get_remote_user() {
+    if [ ! -f "$ACTIVE_FILE" ]; then return 1; fi
+    local active
+    active=$(cat "$ACTIVE_FILE" 2>/dev/null)
+
+    # Baca seluruh value dari profil (format: root@host|alice)
+    local raw
+    raw=$(grep "^${active}=" "$PROFILE_FILE" | cut -d'=' -f2)
+
+    # Ekstrak bagian setelah "|" — ini adalah melisa username
+    # Jika tidak ada "|", hasilnya kosong (profil lama yang belum diperbarui)
+    echo "$raw" | cut -s -d'|' -f2
+}
+
 # ------------------------------------------------------------------------------
 # PROFILE MANAGEMENT
 # ------------------------------------------------------------------------------
@@ -57,34 +71,42 @@ get_active_conn() {
 # Registers a new remote server profile and configures SSH multiplexing.
 auth_add() {
     local name=$1
-    local user_host=$2 # Expected format: user@192.168.1.10
-    
+    local user_host=$2
+
     if [ -z "$name" ] || [ -z "$user_host" ]; then
         log_error "Usage: melisa auth add <profile_name> <user@host>"
         exit 1
     fi
 
-    # Ensure a local SSH keypair exists before attempting to copy it
     ensure_ssh_key
-    
+
     log_info "Deploying public SSH key to ${BOLD}${user_host}${RESET}..."
     log_info "Please prepare to enter the remote server password."
-    
-    # Attempt to copy the SSH ID. Abort if the connection or authentication fails.
     ssh-copy-id "$user_host" || { log_error "Failed to establish a connection to the remote server."; exit 1; }
 
-    # Setup Automatic SSH Multiplexing (ControlMaster)
-    # This drastically speeds up subsequent 'melisa' commands by reusing the initial SSH connection
-    local host=$(echo "$user_host" | cut -d'@' -f2)
-    local user=$(echo "$user_host" | cut -d'@' -f1)
-    
-    # Ensure the SSH directory and sockets folder exist with strict permissions
+    # --- TAMBAHAN: Tanya melisa username ---
+    # Alice mungkin SSH sebagai root, tapi punya username 'alice' di MELISA.
+    # Tanpa ini, semua path berbasis ~/ akan salah (menunjuk ke /root/).
+    local remote_melisa_user=""
+    read -r -p "$(echo -e "${YELLOW}[SETUP]${RESET} Enter your MELISA username on this server (leave blank if same as SSH user): ")" remote_melisa_user
+
+    # Jika dikosongkan, gunakan bagian user dari user@host sebagai fallback
+    if [ -z "$remote_melisa_user" ]; then
+        remote_melisa_user=$(echo "$user_host" | cut -d'@' -f1)
+        log_info "Using SSH user '${remote_melisa_user}' as remote MELISA username."
+    fi
+    # --- AKHIR TAMBAHAN ---
+
+    local host
+    host=$(echo "$user_host" | cut -d'@' -f2)
+    local user
+    user=$(echo "$user_host" | cut -d'@' -f1)
+
     mkdir -p ~/.ssh/sockets
     chmod 700 ~/.ssh ~/.ssh/sockets 2>/dev/null
     touch ~/.ssh/config
     chmod 600 ~/.ssh/config 2>/dev/null
 
-    # Inject the multiplexing configuration if it doesn't already exist for this specific host
     if ! grep -q "Host $host" ~/.ssh/config 2>/dev/null; then
         cat <<EOF >> ~/.ssh/config
 
@@ -96,17 +118,16 @@ Host $host
 EOF
     fi
 
-    # Save to the MELISA profile configuration
-    # Note: Using grep -v and mv instead of sed -i for 100% cross-platform POSIX compatibility
+    # Simpan dengan format baru: name=root@ip|melisa_username
     if [ -f "$PROFILE_FILE" ]; then
         grep -v "^${name}=" "$PROFILE_FILE" > "${PROFILE_FILE}.tmp"
         mv "${PROFILE_FILE}.tmp" "$PROFILE_FILE"
     fi
-    
-    echo "${name}=${user_host}" >> "$PROFILE_FILE"
+
+    echo "${name}=${user_host}|${remote_melisa_user}" >> "$PROFILE_FILE"
     echo "$name" > "$ACTIVE_FILE"
-    
-    log_success "Server profile '${name}' (${user_host}) successfully registered and set as ACTIVE!"
+
+    log_success "Server profile '${name}' registered. Remote MELISA user: ${BOLD}${remote_melisa_user}${RESET}"
 }
 
 # Safely removes an existing server profile from the local configuration.

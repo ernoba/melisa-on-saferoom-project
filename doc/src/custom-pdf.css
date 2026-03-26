@@ -1,0 +1,202 @@
+/* 1. KEMBALI KE MARGIN 0 (BUNUH SEMUA WARNA PUTIH KERTAS) */
+@page {
+    margin: 0 !important; 
+}
+
+@media print {
+    /* ---------------------------------------------------------
+       2. PAKSA BACKGROUND GELAP KE SELURUH HALAMAN
+       --------------------------------------------------------- */
+    html, body, .page, .page-wrapper {
+        background-color: #0f1419 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    /* ---------------------------------------------------------
+       2.5 TRIK CLONE PADDING AGAR TEKS TIDAK NABRAK UJUNG KERTAS
+       --------------------------------------------------------- */
+    #content {
+        /* Jarak aman Kiri & Kanan */
+        padding-left: 15mm !important;
+        padding-right: 15mm !important;
+        
+        /* Jarak aman Atas & Bawah */
+        padding-top: 5mm !important;
+        padding-bottom: 5mm !important;
+
+        /* INI KUNCI UTAMANYA: 
+           Memaksa browser meng-copy (clone) padding atas/bawah 
+           ke SETIAP potongan halaman baru, bukan cuma di halaman 1 dan terakhir */
+        -webkit-box-decoration-break: clone !important;
+        box-decoration-break: clone !important;
+        
+        background-color: #0f1419 !important;
+        box-sizing: border-box !important;
+        min-height: 90vh !important;
+    }
+    /* ---------------------------------------------------------
+       3. TEKS UTAMA (MARKDOWN: Paragraphs & Lists)
+       Kita target spesifik agar TIDAK merusak warna Syntax Highlighting di blok kode
+       --------------------------------------------------------- */
+    #content, #content main, p, li, dd, dt, .content p {
+        color: #b3b1ad !important;
+        line-height: 1.6 !important;
+    }
+
+    /* ---------------------------------------------------------
+       4. JUDUL (MARKDOWN: #, ##, ###) & ANTI LINK HITAM
+       --------------------------------------------------------- */
+    h1, h2, h3, h4, h5, h6,
+    #content main h1, #content main h2, .content h1 {
+        color: #ffffff !important;
+        font-weight: 800 !important;
+        border-bottom: 1px solid #1a2026 !important;
+        margin-top: 1.5em !important;
+        padding-bottom: 5px !important;
+    }
+
+    /* mdBook sering membungkus teks judul dengan tag <a> */
+    h1 a, h2 a, h3 a, h4 a, h5 a, h6 a, .header {
+        color: #ffffff !important;
+        text-decoration: none !important;
+    }
+
+    /* ---------------------------------------------------------
+       5. PEMISAH HALAMAN (MARKDOWN: --- )
+       --------------------------------------------------------- */
+    hr {
+        border: none !important;
+        border-top: 1px solid #30363d !important;
+        margin: 2em 0 !important;
+    }
+
+    /* ---------------------------------------------------------
+       6. BLOK PENJELASAN / KUTIPAN (MARKDOWN: > text )
+       --------------------------------------------------------- */
+    blockquote, .admonition, .warning, .info, .note, .tip {
+        background-color: #11161c !important; /* Sedikit beda dari BG utama */
+        border-left: 4px solid #39bae6 !important; /* Garis aksen biru Ayu */
+        padding: 12px 15px !important;
+        margin: 1.5em 0 !important;
+        border-radius: 3px !important;
+    }
+    
+    blockquote p, .admonition p {
+        color: #c2d1df !important; /* Teks kutipan sedikit lebih terang */
+        margin: 0 !important;
+    }
+
+    /* ---------------------------------------------------------
+       7. LINK / TAUTAN (MARKDOWN: [text](url) )
+       --------------------------------------------------------- */
+    a:not(.header) {
+        color: #39bae6 !important; /* Biru cerah khas Ayu */
+        text-decoration: none !important;
+    }
+
+    /* ---------------------------------------------------------
+       8. KODE INLINE (MARKDOWN: `kode` di tengah teks)
+       --------------------------------------------------------- */
+    p > code, li > code, td > code, a > code {
+        display: inline !important;
+        background-color: #161b22 !important;
+        color: #ffb454 !important; /* Warna Oranye agar pop-out di tengah teks */
+        border: 1px solid #30363d !important;
+        padding: 2px 5px !important;
+        border-radius: 3px !important;
+        font-family: "JetBrains Mono", "Fira Code", monospace !important;
+    }
+
+    /* ---------------------------------------------------------
+       9. BLOK KODE (MARKDOWN: ```rust ... ```)
+       --------------------------------------------------------- */
+    pre {
+        background-color: #11161c !important; /* Kotak hitam pekat */
+        border: 1px solid #30363d !important;
+        border-radius: 6px !important;
+        padding: 12px !important;
+        overflow-x: auto !important;
+        white-space: pre-wrap !important;
+        word-wrap: break-word !important;
+    }
+
+    pre > code {
+        display: block !important;
+        background: transparent !important; /* Biarkan <pre> yang pegang warna BG */
+        color: #e6edf3 !important; /* Warna fallback jika hljs mati */
+        font-family: "JetBrains Mono", "Fira Code", monospace !important;
+    }
+
+    /* ---------------------------------------------------------
+       10. TABEL (MARKDOWN: | Kolom | Kolom |)
+       --------------------------------------------------------- */
+    table, #content main table, .content table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        margin-top: 1.5em !important;
+        margin-bottom: 1.5em !important;
+    }
+
+    tr, #content main table tr, tr:nth-child(even), tr:nth-child(odd) {
+        background-color: transparent !important; 
+    }
+
+    th, #content main table th {
+        border: 1px solid #30363d !important;
+        background-color: #1a2026 !important; 
+        color: #ffffff !important;
+        font-weight: 800 !important;
+        padding: 10px 12px !important;
+        text-align: left !important;
+    }
+
+    td, #content main table td {
+        border: 1px solid #30363d !important;
+        background-color: #0f1419 !important; /* Sama dengan BG kertas agar rapi */
+        color: #b3b1ad !important;
+        padding: 10px 12px !important;
+    }
+
+    /* ---------------------------------------------------------
+       11. HILANGKAN ELEMEN UI WEB (SIDEBAR & NAVIGASI)
+       --------------------------------------------------------- */
+    .nav-chapters, .mobile-nav-chapters, #menu-bar, .sidebar, #sidebar-resize-handle, .hidden {
+        display: none !important;
+        visibility: hidden !important;
+    }
+
+    /* ---------------------------------------------------------
+       12. CEGAH ELEMEN TERPOTONG DI TENGAH HALAMAN (PAGE BREAKS)
+       --------------------------------------------------------- */
+       
+    /* Cegah blok kode, tabel, dan kutipan terbelah dua antar halaman */
+    pre, blockquote, table, .admonition {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+    }
+
+    /* Cegah baris tabel kepotong secara horizontal */
+    tr, td, th {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+    }
+
+    /* Cegah paragraf terpotong menyisakan 1 baris saja di halaman berikutnya */
+    p {
+        orphans: 3 !important;
+        widows: 3 !important;
+    }
+
+    /* Cegah Judul tertinggal sendirian di bawah halaman (harus nempel dengan teks bawahnya) */
+    h1, h2, h3, h4, h5, h6 {
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+    }
+}

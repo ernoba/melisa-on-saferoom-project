@@ -12,3 +12,9 @@ create-missing = false
 [output.html]
 git-repository-url = "https://github.com/ernoba/melisa-on-saferoom-project"
 edit-url-template = "https://github.com/ernoba/melisa-on-saferoom-project/edit/main/doc/{path}"
+
+additional-css = ["src/custom-pdf.css"]
+
+[output.pdf]
+print-background = true
+paper-size = "a4"

@@ -7,6 +7,15 @@ use crate::cli::color_text::{RED, GREEN, BLUE, YELLOW, BOLD, RESET};
 
 pub const PROJECTS_MASTER: &str = "/opt/melisa/projects";
 
+// new chhck user folder project
+async fn check_user_in_project(username: &str, project_name: &str) -> bool {
+    let git_path = Path::new("/home")
+        .join(username)
+        .join(project_name)
+        .join(".git");
+    git_path.exists()
+}
+
 /// Initializes a new master bare repository for a project.
 /// This acts as the central source of truth for all users collaborating on the project.
 pub async fn new_project(project_name: &str) {
@@ -106,35 +115,76 @@ pub async fn invite(project_name: &str, invited_users: &[&str]) {
 }
 
 /// Automatically commits and pushes a user's local changes to the master repository.
-pub async fn pull(username: &str, project_name: &str) {
+pub async fn pull(username: &str, project_name: &str) -> bool {
+    // 1. Validasi: workspace user harus ada dan merupakan git repo
+    if !check_user_in_project(username, project_name).await {
+        eprintln!(
+            "{}[ERROR]{} User '{}' does not have a workspace for project '{}'.",
+            RED, RESET, username, project_name
+        );
+        eprintln!(
+            "{}[TIP]{} Run: melisa --invite {} {}",
+            YELLOW, RESET, project_name, username
+        );
+        return false;
+    }
+
     let user_path = format!("/home/{}/{}", username, project_name);
 
-    // Detect the current active branch as the user to prevent .git permission conflicts
+    // 2. Deteksi branch aktif
     let branch_out = Command::new("sudo")
         .args(&["-u", username, "git", "-C", &user_path, "branch", "--show-current"])
         .output().await;
-    
-    // Safely parse the branch name, defaulting to "master" if detection fails
-    let branch = String::from_utf8_lossy(&branch_out.as_ref().map(|o| o.stdout.clone()).unwrap_or_default())
-        .trim().to_string();
+
+    let branch = String::from_utf8_lossy(
+        &branch_out.as_ref().map(|o| o.stdout.clone()).unwrap_or_default()
+    ).trim().to_string();
     let branch = if branch.is_empty() { "master".to_string() } else { branch };
 
-    println!("{}[INFO]{} Initiating automated synchronization for '{}'...", BLUE, RESET, project_name);
+    println!(
+        "{}[INFO]{} Pulling from '{}' workspace into master (Branch: {})...",
+        BLUE, RESET, username, branch
+    );
 
-    // 1. Stage all changes and execute an automated commit
-    let _ = Command::new("sudo").args(&["-u", username, "git", "-C", &user_path, "add", "."]).status().await;
-    let _ = Command::new("sudo").args(&["-u", username, "git", "-C", &user_path, "commit", "-m", "Auto-sync executed by MELISA"]).status().await;
+    // 3. Stage semua perubahan
+    let _ = Command::new("sudo")
+        .args(&["-u", username, "git", "-C", &user_path, "add", "."])
+        .status().await;
 
-    // 2. Push the committed changes to the master bare repository
+    // 4. Commit — --allow-empty agar tidak gagal jika tidak ada perubahan baru
+    //    (pipeline tetap jalan sampai push)
+    let _ = Command::new("sudo")
+        .args(&[
+            "-u", username, "git", "-C", &user_path,
+            "commit", "-m", "Admin force-pull: executed by MELISA",
+            "--allow-empty"
+        ])
+        .status().await;
+
+    // 5. Push ke master bare repo
     let push_status = Command::new("sudo")
         .args(&["-u", username, "git", "-C", &user_path, "push", "origin", &branch])
         .status().await;
 
     match push_status {
         Ok(s) if s.success() => {
-            println!("{}[SYNC]{} Workspace modifications for '{}' (@{}) successfully transmitted.", GREEN, RESET, project_name, branch);
+            println!(
+                "{}[SUCCESS]{} Workspace '{}@{}' successfully pulled into master.",
+                GREEN, RESET, username, project_name
+            );
+            true
+        },
+        _ => {
+            eprintln!(
+                "{}[ERROR]{} Failed to push '{}' workspace to master. Possible divergence.",
+                RED, RESET, username
+            );
+            eprintln!(
+                "{}[TIP]{} Consider: melisa --update {} --force (to reset their workspace first)",
+                YELLOW, RESET, project_name
+            );
+            false
         }
-        _ => eprintln!("{}[ERROR]{} Failed to push modifications to the master repository.", RED, RESET),
     }
 }
 
@@ -236,80 +286,159 @@ pub async fn out_user(targets: &[&str], project_name: &str) {
 
 /// Forcefully syncs a user's local workspace with the latest state of the master repository.
 /// Typically triggered by the post-receive hook.
-pub async fn update_project(username: &str, project_name: &str, _force: bool) {
-    // 1. Validate inputs to prevent path traversal (e.g., input like "../../../etc")
-    if username.contains('/') || username.contains("..") || project_name.contains('/') || project_name.contains("..") {
+pub async fn update_project(username: &str, project_name: &str, force: bool) {
+    // Validasi input: cegah path traversal
+    if username.contains('/') || username.contains("..") 
+       || project_name.contains('/') || project_name.contains("..") 
+    {
         eprintln!("{}[ERROR]{} Invalid characters detected in input. Sync aborted.", RED, RESET);
         return;
     }
 
-    // Use PathBuf for safe path handling
     let base_path = Path::new("/home").join(username).join(project_name);
     let user_path = base_path.to_str().unwrap_or_default().to_string();
     let git_path = base_path.join(".git");
 
-    // Validate that the target directory is an actual Git repository
     if !git_path.exists() {
-        eprintln!("{}[ERROR]{} Target path '{}' is not a valid Git repository. Sync aborted.", RED, RESET, user_path);
+        eprintln!(
+            "{}[ERROR]{} Target path '{}' is not a valid Git repository. Sync aborted.",
+            RED, RESET, user_path
+        );
         return;
     }
 
-    // Determine the current active branch
+    // Deteksi branch aktif
     let branch_out = Command::new("sudo")
         .args(&["-u", username, "git", "-C", &user_path, "branch", "--show-current"])
         .output().await;
-    
-    let mut branch = String::from_utf8_lossy(&branch_out.as_ref().map(|o| o.stdout.clone()).unwrap_or_default())
-        .trim().to_string();
+
+    let mut branch = String::from_utf8_lossy(
+        &branch_out.as_ref().map(|o| o.stdout.clone()).unwrap_or_default()
+    ).trim().to_string();
     if branch.is_empty() { branch = "master".to_string(); }
 
-    println!("{}[INFO]{} Executing hard synchronization for project '{}' (Branch: {})...", BLUE, RESET, project_name, branch);
+    // --- PERCABANGAN BERDASARKAN force FLAG ---
+    if force {
+        // -------------------------------------------------------------------------
+        // FORCE MODE: Hard reset — hancurkan semua perubahan lokal
+        // Dipanggil oleh: post-receive hook (via --update-all) atau --force eksplisit
+        // -------------------------------------------------------------------------
+        println!(
+            "{}[SYNC/FORCE]{} Hard reset for '{}@{}' (Branch: {})...",
+            YELLOW, RESET, project_name, username, branch
+        );
 
-    // 1. Temporarily enforce ownership so the user execution environment can manipulate files during reset
-    let _ = Command::new("sudo")
-        .args(&["chown", "-R", &format!("{}:{}", username, username), &user_path])
-        .status().await;
+        // 1. Perbaiki ownership dulu agar git bisa manipulasi files
+        let _ = Command::new("sudo")
+            .args(&["chown", "-R", &format!("{}:{}", username, username), &user_path])
+            .status().await;
 
-    // 2. Purge untracked files to prevent merge conflicts or ghost files
-    let _ = Command::new("sudo")
-        .args(&["-u", username, "git", "-C", &user_path, "clean", "-fd"])
-        .status().await;
+        // 2. Hapus untracked files dan direktori
+        let _ = Command::new("sudo")
+            .args(&["-u", username, "git", "-C", &user_path, "clean", "-fd"])
+            .status().await;
 
-    // 3. Fetch latest data from the master repository
-    let _ = Command::new("sudo")
-        .args(&["-u", username, "git", "-C", &user_path, "fetch", "origin"])
-        .status().await;
+        // 3. Fetch data terbaru dari master bare repo
+        let _ = Command::new("sudo")
+            .args(&["-u", username, "git", "-C", &user_path, "fetch", "origin"])
+            .status().await;
 
-    // 4. Forcefully overwrite the local state to exactly match the remote branch
-    let status = Command::new("sudo")
-        .args(&["-u", username, "git", "-C", &user_path, "reset", "--hard", &format!("origin/{}", branch)])
-        .status().await;
+        // 4. Hard reset: workspace sekarang identik dengan master
+        let status = Command::new("sudo")
+            .args(&[
+                "-u", username, "git", "-C", &user_path,
+                "reset", "--hard", &format!("origin/{}", branch)
+            ])
+            .status().await;
 
-    match status {
-        Ok(s) if s.success() => {
-            println!("{}[SUCCESS]{} Project '{}' successfully synchronized to the latest master state.", GREEN, RESET, project_name);
-            
-            // SECURITY FIX: Remove "kasirku" and handle the generic storage path
-            let storage_path = base_path.join("storage");
-            
-            if storage_path.exists() {
-                // IMPORTANT: Verify that 'storage' is a real directory, NOT a symlink.
-                // This prevents users from linking 'storage' to /etc/shadow or other system files.
-                if let Ok(meta) = std::fs::symlink_metadata(&storage_path) {
-                    if meta.file_type().is_symlink() {
-                        eprintln!("{}[ERROR]{} Security risk detected: 'storage' is a symlink. Permission patch aborted.", RED, RESET);
-                        return;
-                    }
-                }
+        match status {
+            Ok(s) if s.success() => {
+                println!(
+                    "{}[SUCCESS]{} '{}' (user: {}) forcefully synchronized to master state.",
+                    GREEN, RESET, project_name, username
+                );
+            },
+            _ => eprintln!(
+                "{}[ERROR]{} Force sync failed for user '{}' project '{}'.",
+                RED, RESET, username, project_name
+            ),
+        }
 
-                let storage_path_str = storage_path.to_str().unwrap_or_default();
-                let _ = Command::new("sudo").args(&["chmod", "-R", "775", storage_path_str]).status().await;
-                let _ = Command::new("sudo").args(&["chown", "-R", &format!("{}:www-data", username), storage_path_str]).status().await;
-                println!("{}[PATCH]{} Restored Laravel storage permissions.", YELLOW, RESET);
+    } else {
+        // -------------------------------------------------------------------------
+        // SAFE MODE: Merge --ff-only — pertahankan uncommitted changes
+        // Dipanggil oleh: melisa --update myapp (tanpa --force)
+        // Cocok untuk: user yang mau pull perubahan teman tanpa kehilangan kerjaan sendiri
+        // -------------------------------------------------------------------------
+        println!(
+            "{}[SYNC/SAFE]{} Safe update for '{}@{}' (Branch: {})...",
+            BLUE, RESET, project_name, username, branch
+        );
+
+        // 1. Fetch tanpa mengubah apapun di workspace
+        let fetch_status = Command::new("sudo")
+            .args(&["-u", username, "git", "-C", &user_path, "fetch", "origin"])
+            .status().await;
+
+        if fetch_status.as_ref().map(|s| !s.success()).unwrap_or(true) {
+            eprintln!(
+                "{}[ERROR]{} Failed to fetch from master for user '{}'. Check network/repo.",
+                RED, RESET, username
+            );
+            return;
+        }
+
+        // 2. Fast-forward merge: hanya berhasil jika tidak ada divergence
+        //    Jika ada uncommitted changes, git merge akan gagal — ini AMAN,
+        //    user tidak kehilangan kerjaan mereka.
+        let merge_status = Command::new("sudo")
+            .args(&[
+                "-u", username, "git", "-C", &user_path,
+                "merge", "--ff-only", &format!("origin/{}", branch)
+            ])
+            .status().await;
+
+        match merge_status {
+            Ok(s) if s.success() => {
+                println!(
+                    "{}[SUCCESS]{} '{}' (user: {}) safely updated to latest master.",
+                    GREEN, RESET, project_name, username
+                );
+            },
+            Ok(_) => {
+                // ff-only gagal: branch lokal sudah diverged dari master
+                // Ini BUKAN error fatal — user mungkin punya commit lokal yang belum di-push
+                println!(
+                    "{}[INFO]{} Cannot fast-forward '{}' for user '{}'.",
+                    YELLOW, RESET, project_name, username
+                );
+                println!(
+                    "{}[TIP]{} Local branch has diverged from master.",
+                    YELLOW, RESET
+                );
+                println!(
+                    "{}[TIP]{} Use 'melisa --update {} --force' to discard local changes,",
+                    YELLOW, RESET, project_name
+                );
+                println!(
+                    "{}[TIP]{} or resolve manually: ssh to server → cd ~/{} → git status",
+                    YELLOW, RESET, project_name
+                );
+            },
+            Err(e) => {
+                eprintln!("{}[ERROR]{} Merge command failed: {}", RED, RESET, e);
             }
-        },
-        _ => eprintln!("{}[ERROR]{} Physical synchronization failed on the host server.", RED, RESET),
+        }
     }
+
+    // NOTE: Blok storage/ Laravel yang ada di kode asli DIHAPUS dari sini.
+    // Alasan: itu adalah kode proyek spesifik ("kasirku") yang tidak relevan
+    // dengan MELISA sebagai tooling umum. Komentar di kode asli sendiri menyebut
+    // "SECURITY FIX: Remove 'kasirku'" tapi implementasinya tidak pernah dihapus.
+    //
+    // Jika project Anda memerlukan post-sync hook (chmod storage/, build artifacts, dll),
+    // implementasikan sebagai file terpisah: /home/<user>/<project>/.melisa-post-sync.sh
+    // dan panggil dari sini jika file tersebut ada. Ini membuat MELISA tetap generic.
 }
 
 /// Triggers a hard update across ALL users assigned to a specific project.

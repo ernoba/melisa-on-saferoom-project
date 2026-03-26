@@ -207,53 +207,109 @@ exec_clone() {
 # Pushes local changes to the remote repository and synchronizes untracked .env files.
 exec_sync() {
     ensure_connected
-    
-    # 1. Identify the project context based on the current working directory
-    local project_name=$(db_identify_by_pwd)
-    
+
+    # --- PRE-FLIGHT: Pastikan git dan rsync tersedia ---
+    # Bug lama: hanya ssh yang dicek di entry point, git/rsync tidak pernah dicek.
+    for tool in git rsync; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            log_error "Required tool '${tool}' is not installed or not in PATH."
+            log_error "Install it: apt install ${tool}  OR  dnf install ${tool}"
+            exit 1
+        fi
+    done
+
+    # 1. Identifikasi project dari registry path lokal
+    local project_name
+    project_name=$(db_identify_by_pwd)
+
     if [ -z "$project_name" ]; then
         log_error "The current directory is not registered as a MELISA project workspace."
+        log_error "Run 'melisa clone <project>' first, or register manually:"
+        log_error "  echo \"myapp|\$(realpath .)\" >> ~/.config/melisa/registry"
         exit 1
     fi
 
-    # 2. Navigate to the absolute project root to ensure Git commands execute accurately
-    local project_root=$(db_get_path "$project_name")
+    # 2. Pindah ke root project
+    local project_root
+    project_root=$(db_get_path "$project_name")
     cd "$project_root" || { log_error "Failed to access workspace root: $project_root"; exit 1; }
 
-    local branch=$(git branch --show-current 2>/dev/null || echo "master")
+    # 3. Validasi: pastikan ini adalah git repository
+    # Bug lama: tidak ada validasi. Jika di-clone dengan --force (rsync, tanpa .git),
+    # semua perintah git berikut akan gagal tanpa pesan error yang informatif.
+    if [ ! -d ".git" ]; then
+        log_error "The workspace at '${project_root}' is not a Git repository."
+        log_error "This project was likely cloned with '--force' (Rsync mode)."
+        log_error "To use 'sync', you need a proper Git clone:"
+        log_error "  rm -rf ${project_root} && melisa clone ${project_name}"
+        exit 1
+    fi
+
+    local branch
+    branch=$(git branch --show-current 2>/dev/null || echo "master")
     log_header "Synchronizing $project_name [Branch: $branch]"
-    
-    # Automated Stage & Commit sequence
+
+    # 4. Stage, commit, dan push ke bare repo
     git add .
     git commit -m "melisa-sync: $(date +'%Y-%m-%d %H:%M')" --allow-empty > /dev/null
-    
+
     log_info "Transmitting delta to host server..."
-    if git push -f origin "$branch" 2>&1 | sed 's/^/  /'; then
-        # Force the server-side to apply the physical update to the user's workspace
-        ssh "$CONN" "melisa --update $project_name --force"
-        
-        # 3. Environment Synchronization
-        # Untracked .env files are synced via Rsync utilizing the -R flag to preserve relative paths
-        log_info "Synchronizing environment configurations (.env)..."
-        local env_files=$(find . -maxdepth 2 -type f -name ".env")
-        if [ -n "$env_files" ]; then
-            echo "$env_files" | xargs -I {} rsync -azR "{}" "$CONN:~/$project_name/"
-        fi
-        
-        log_success "Host server is now perfectly synchronized with local state."
-    else
-        log_error "Git push protocol failed. Verify network connectivity and remote configurations."
+    if ! git push -f origin "$branch" 2>&1 | sed 's/^/  /'; then
+        log_error "Git push protocol failed. Verify network connectivity and remote configuration."
+        log_error "Test manually: git remote -v"
+        exit 1
     fi
+
+    # --- CATATAN PENTING (Mengapa --update dihapus) ---
+    # Sebelumnya ada: ssh "$CONN" "melisa --update $project_name --force"
+    # Ini DIHAPUS karena:
+    #   a) git push ke bare repo sudah memicu post-receive hook secara otomatis.
+    #   b) Post-receive hook menjalankan: sudo melisa --update-all $project_name
+    #      yang memperbarui workspace SEMUA user termasuk Alice.
+    #   c) Pemanggilan SSH eksplisit di sini berjalan sebagai 'root' (bukan Alice),
+    #      sehingga update_project mencari /home/root/$project_name yang tidak ada.
+    #   d) Hasilnya: pemanggilan selalu gagal secara diam-diam → dead code.
+    # Post-receive hook sudah cukup. Jika diperlukan verifikasi, gunakan:
+    #   ssh "$CONN" "melisa --projects"  ← hanya untuk diagnostic
+
+    # 5. Sync .env files — DIPERBAIKI
+    # Bug lama: rsync ke "$CONN:~/$project_name/" yang = "/root/myapp/" (salah)
+    # Fix: gunakan path absolut berdasarkan remote melisa username
+    log_info "Synchronizing environment configurations (.env)..."
+
+    local remote_user
+    remote_user=$(get_remote_user)
+
+    local env_files
+    env_files=$(find . -maxdepth 2 -type f -name ".env")
+
+    if [ -n "$env_files" ]; then
+        if [ -n "$remote_user" ]; then
+            # PATH BENAR: /home/alice/myapp/ bukan /root/myapp/
+            local remote_env_path="/home/${remote_user}/${project_name}/"
+            echo "$env_files" | xargs -I {} rsync -azR "{}" "$CONN:${remote_env_path}"
+            log_success ".env files synced to ${remote_user}@server:${remote_env_path}"
+        else
+            # Fallback: remote_user belum dikonfigurasi (profil lama)
+            # Beri peringatan agar user memperbarui profil mereka
+            log_warning ".env sync SKIPPED: remote MELISA username not configured."
+            log_warning "Update your profile: melisa auth remove ${CONN} && melisa auth add <name> ${CONN}"
+            log_warning "Or manually: rsync .env root@server:/home/<your-username>/${project_name}/"
+        fi
+    else
+        log_info "No .env files found within 2 directory levels. Skipping env sync."
+    fi
+
+    log_success "Synchronization complete. Server will propagate changes via post-receive hook."
 }
 
 # Pulls the latest physical data from the host workspace to the local machine via Rsync.
 exec_get() {
     ensure_connected
-    
+
     local project_name=""
     local force_get=false
-    
-    # 1. Robust Argument Parsing
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             --force) force_get=true; shift ;;
@@ -261,19 +317,17 @@ exec_get() {
         esac
     done
 
-    # 2. Contextual Project Identification
     [ -z "$project_name" ] && project_name=$(db_identify_by_pwd)
 
     if [ -z "$project_name" ]; then
-        log_error "Project context unknown. Usage: melisa get <name> [--force]"
+        log_error "Project context unknown. Usage: melisa get <n> [--force]"
         exit 1
     fi
 
-    # 3. Path Resolution & Anti-Nesting Logic
-    local local_path=$(db_get_path "$project_name")
-    
+    local local_path
+    local_path=$(db_get_path "$project_name")
+
     if [ -z "$local_path" ]; then
-        # If not registered in the DB, check if the current folder matches the project name
         if [ "$(basename "$PWD")" == "$project_name" ]; then
             local_path="$(realpath .)"
         else
@@ -281,33 +335,47 @@ exec_get() {
         fi
     fi
 
+    # --- PERBAIKAN PATH REMOTE ---
+    # Bug lama: remote_path="~/$project_name/" → /root/$project_name/ (salah)
+    # Fix: gunakan get_remote_user() untuk path yang benar
+    local remote_user
+    remote_user=$(get_remote_user)
+    local remote_path
+
+    if [ -n "$remote_user" ]; then
+        # Path yang benar: workspace milik user Alice di server
+        remote_path="/home/${remote_user}/${project_name}/"
+    else
+        # Fallback untuk profil lama — berikan peringatan
+        log_warning "Remote MELISA username not configured. Falling back to ~/ (may point to /root/)."
+        log_warning "Run 'melisa auth add' again to set your remote username."
+        remote_path="~/${project_name}/"
+    fi
+    # --- AKHIR PERBAIKAN ---
+
     log_header "Retrieving Data for Workspace: $project_name"
 
-    # 4. Rsync Execution Pipeline
-    local remote_path="~/$project_name/"
-    # Skip the .git directory to prevent local repo corruption
     local opts="-avz --progress --exclude='.git/'"
-    
+
     if [ "$force_get" = true ]; then
         log_info "Protocol: Force Overwrite (Data Replacement)"
     else
-        log_info "Protocol: Safe Sync (Ignoring existing files)"
+        log_info "Protocol: Safe Sync (Ignoring existing local files)"
         opts="$opts --ignore-existing"
     fi
 
     mkdir -p "$local_path"
 
-    # Execute Rsync with trailing slashes to copy directory contents
     if rsync $opts "$CONN:$remote_path" "$local_path/"; then
-        # 5. Update local registry metadata
         db_update_project "$project_name" "$local_path"
-        
         log_success "Data retrieval completed at: $local_path"
         inspect_result "$local_path"
     else
-        log_error "Rsync protocol failed. Verify that the workspace exists on the host server."
+        log_error "Rsync protocol failed."
+        log_error "Verify workspace exists: ssh $CONN 'ls -la /home/$remote_user/'"
     fi
 }
+
 
 # Transparently forwards unrecognized commands directly to the MELISA host environment.
 exec_forward() {

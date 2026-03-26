@@ -391,17 +391,23 @@ pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult 
                 },
                 "--pull" => {
                     if !admin_check().await {
-                        println!("{}[ERROR]{} Only Administrators can execute a forced pull.", RED, RESET);
+                        println!("{}[ERROR]{} Only Administrators can pull user workspaces.", RED, RESET);
                         return ExecResult::Continue;
                     }
-                    if parts.len() < 3 {
-                        println!("{}[ERROR]{} Usage: melisa --pull <from_user> <project_name>{}", RED, BOLD, RESET);
+                    if parts.len() < 4 {
+                        println!(
+                            "{}[ERROR]{} Usage: melisa --pull <from_user> <project_name>{}",
+                            RED, BOLD, RESET
+                        );
                         return ExecResult::Continue;
                     }
-                    let project_name = parts[2];
-                    let from_user = parts[3];
+                    let from_user = parts[2];      // BENAR: alice
+                    let project_name = parts[3];   // BENAR: myapp
 
-                    pull(from_user, project_name).await;
+                    let success = pull(from_user, project_name).await;
+                    if !success {
+                        return ExecResult::Continue;
+                    }
                 },
                 "--projects" => {
                     list_projects(home).await;
