@@ -377,6 +377,6 @@ See [LICENSE](./LICENSE) for the full text.
 ---
 
 ###  Join Community
-[Telegram melisa](t.me/melisaproject) | [Instagram melisa](https://www.instagram.com/melisa.project)
+[Telegram melisa](https://t.me/melisaproject) | [Instagram melisa](https://www.instagram.com/melisa.project)
 
 *Built to end the late Friday night "I think I broke something" messages.*
