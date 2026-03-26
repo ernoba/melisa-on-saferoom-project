@@ -66,14 +66,23 @@ else
     SHELL_RC="$HOME/.profile"
 fi
 
+RELOAD_NEEDED=false
+
 # Check if ~/.local/bin is already present in the system PATH
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    echo -e "  ${YELLOW}[INFO] Registering ~/.local/bin to your PATH in $(basename "$SHELL_RC")...${RESET}"
-    echo -e '\n# MELISA Client Environment' >> "$SHELL_RC"
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+    # [CRITICAL FIX]: Check if the export command already exists in the file to prevent duplicates
+    if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$SHELL_RC" 2>/dev/null; then
+        echo -e "  ${YELLOW}[INFO] Registering ~/.local/bin to your PATH in $(basename "$SHELL_RC")...${RESET}"
+        echo -e '\n# MELISA Client Environment' >> "$SHELL_RC"
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+        RELOAD_NEEDED=true
+    else
+        echo -e "  [v] PATH registration already exists in $(basename "$SHELL_RC"), but requires reloading."
+        RELOAD_NEEDED=true
+    fi
     
+    # Temporarily apply to the current session so the rest of the script/user can use it immediately
     export PATH="$HOME/.local/bin:$PATH"
-    RELOAD_NEEDED=true
 else
     echo -e "  [v] System PATH is already configured correctly."
 fi

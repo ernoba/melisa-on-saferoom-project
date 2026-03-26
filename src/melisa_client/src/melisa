@@ -19,7 +19,15 @@ CYAN="\e[36m"
 YELLOW="\e[33m"
 RESET="\e[0m"
 
-# 1. Pre-flight Module Verification (Anti-Silent Fail)
+# 1. Pre-flight System Dependency Verification (Multi-Distro Safe Check)
+# Ensures that fundamental networking and core utilities exist on the host OS
+if ! command -v ssh >/dev/null 2>&1; then
+    echo -e "${RED}[FATAL ERROR]${RESET} OpenSSH Client ('ssh') is not installed or not in PATH."
+    echo -e "${YELLOW}Tip:${RESET} Install 'openssh-clients' (Fedora/RHEL) or 'openssh-client' (Ubuntu/Debian)."
+    exit 1
+fi
+
+# 2. Pre-flight Module Verification (Anti-Silent Fail)
 # Verifies all required dependencies exist before attempting execution
 for module in "utils.sh" "auth.sh" "exec.sh"; do
     if [ ! -f "$MELISA_LIB/$module" ]; then
@@ -37,7 +45,7 @@ source "$MELISA_LIB/exec.sh"
 # Initialize Authentication Subsystem (Assumes definition in auth.sh)
 init_auth
 
-# 2. Interactive Help Documentation
+# 3. Interactive Help Documentation
 # Triggered if the user runs the command without any arguments
 if [ "$#" -lt 1 ]; then
     echo -e "${BOLD}${CYAN}MELISA REMOTE MANAGER - CLI CLIENT${RESET}"
@@ -65,7 +73,7 @@ if [ "$#" -lt 1 ]; then
     exit 1
 fi
 
-# 3. Command Routing & Argument Parsing
+# 4. Command Routing & Argument Parsing
 COMMAND=$1
 shift # Consume the main command so $@ only contains the trailing arguments
 
