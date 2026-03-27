@@ -122,7 +122,7 @@ Register your server:
 melisa auth add myserver root@<server-ip>
 ```
 
-This generates an SSH key if you don't have one, copies it to the server, configures SSH multiplexing, and saves the profile.
+This generates an SSH key if you don't have one, copies it to the server, configures SSH multiplexing via `~/.ssh/sockets/`, and saves the profile. You'll be prompted to enter your **MELISA username** on the server (leave blank if it's the same as your SSH login user).
 
 Test the connection:
 
@@ -190,34 +190,36 @@ melisa upload mybox ./dist/ /opt/myapp/
 |---------|-------------|
 | `melisa --list` | List all LXC containers |
 | `melisa --active` | List running containers only |
-| `melisa --create <n> <code>` | Provision a new container |
+| `melisa --create <n> <code>` | Provision a new container (Admin) |
 | `melisa --run <n>` | Start a container |
 | `melisa --stop <n>` | Stop a container |
 | `melisa --use <n>` | Attach an interactive shell to a container |
 | `melisa --send <n> <cmd>` | Execute a command inside a container |
 | `melisa --info <n>` | Display container metadata |
-| `melisa --delete <n>` | Destroy a container (confirmation required) |
-| `melisa --search <keyword>` | Search available LXC distributions |
+| `melisa --delete <n>` | Destroy a container — confirmation required (Admin) |
+| `melisa --search <keyword>` | Search available LXC distributions (Admin) |
 | `melisa --add <user>` | Create a new MELISA user (Admin) |
 | `melisa --remove <user>` | Delete a user (Admin) |
 | `melisa --new_project <n>` | Create a shared project (Admin) |
 | `melisa --invite <proj> <users>` | Invite users to a project (Admin) |
 | `melisa --projects` | List your projects |
-| `melisa --update <project>` | Pull latest from master into your workspace |
+| `melisa --update <project> [--force]` | Pull latest from master into your workspace |
 | `melisa --setup` | Initialize host environment (Admin, physical terminal) |
 | `melisa --version` | Print version information |
+
+> **`--audit` flag:** Append `--audit` to any server command to disable the spinner and stream raw subprocess output directly to the terminal. Useful for debugging hangs or silent failures. Example: `melisa --create mybox ubu-jammy-x64 --audit`
 
 ### Client CLI (your workstation)
 
 | Command | Description |
 |---------|-------------|
-| `melisa auth add <n> <user@ip>` | Register a server profile |
+| `melisa auth add <n> <user@ip>` | Register a server profile (prompts for MELISA username) |
 | `melisa auth switch <n>` | Switch active server |
 | `melisa auth list` | List registered servers |
 | `melisa auth remove <n>` | Remove a server profile |
-| `melisa clone <project>` | Clone a project from the server |
+| `melisa clone <project> [--force]` | Clone a project from the server |
 | `melisa sync` | Push local changes to the server |
-| `melisa get <project>` | Pull server-side changes to local |
+| `melisa get <project> [--force]` | Pull server-side changes to local |
 | `melisa run <container> <file>` | Execute a local script in a remote container |
 | `melisa run-tty <container> <file>` | Execute interactively (TTY) |
 | `melisa upload <container> <dir> <dest>` | Upload a directory into a container |

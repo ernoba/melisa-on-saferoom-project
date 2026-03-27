@@ -12,7 +12,7 @@ This section is for contributors, auditors, and curious developers who want to u
 │                                                             │
 │  main.rs                                                    │
 │  ├── check_root() → re-exec via sudo if not root            │
-│  ├── Non-interactive mode (args provided): execute_command() │
+│  ├── Non-interactive mode (args provided): execute_command()│
 │  └── Interactive mode: display_banner() → melisa() REPL     │
 │                                                             │
 │  cli/                                                       │
@@ -46,10 +46,10 @@ This section is for contributors, auditors, and curious developers who want to u
 │  ├── init_auth()                                            │
 │  └── Command routing → auth_*, exec_*, exec_forward         │
 │                                                             │
-│  auth.sh    ← Profile registry + SSH key management        │
-│  exec.sh    ← Remote ops, project sync, file transfer      │
-│  utils.sh   ← Logging, colors, SSH key generation          │
-│  db.sh      ← Local project path registry                  │
+│  auth.sh    ← Profile registry + SSH key management         │
+│  exec.sh    ← Remote ops, project sync, file transfer       │
+│  utils.sh   ← Logging, colors, SSH key generation           │
+│  db.sh      ← Local project path registry                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

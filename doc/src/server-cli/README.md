@@ -36,6 +36,26 @@ ssh root@server "melisa --send mybox apt update"
 
 ---
 
+## The `--audit` Flag
+
+The `--audit` flag is a **global debugging modifier** that can be appended to any MELISA command in any position:
+
+```bash
+melisa --create mybox ubu-jammy-x64 --audit
+melisa --audit --delete mybox
+melisa --stop mybox --audit
+```
+
+When `--audit` is present:
+
+1. **The spinner is hidden** — No progress bar is shown, so raw subprocess output flows directly to the terminal without being obscured.
+2. **Raw subprocess output is inherited** — All output from child processes (`lxc-*`, `git`, `apt`, `userdel`, etc.) streams directly to your terminal instead of being suppressed.
+3. **Debug messages are shown** — Internal diagnostics that are normally hidden (e.g., fallback protocol decisions in `--search`) are printed inline.
+
+`--audit` is useful when a command hangs or fails and the spinner is hiding the actual error. It turns the polished UI into a transparent debug window without requiring log files.
+
+---
+
 ## Command Groups
 
 ### General Commands
@@ -54,7 +74,7 @@ Available to all users:
 | [`--info <n>`](./container-interaction.md) | Display container metadata |
 | [`--upload <n> <dest>`](./container-interaction.md) | Upload a tarball stream into a container |
 | [`--projects`](./project-management.md) | List projects in your workspace |
-| [`--update <project>`](./project-management.md) | Sync your working copy from the master repo |
+| [`--update <project> [--force]`](./project-management.md) | Sync your working copy from the master repo |
 | `cd <path>` | Change directory within the MELISA shell session |
 | `exit`, `quit` | Terminate the MELISA session |
 

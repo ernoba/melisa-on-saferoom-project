@@ -215,9 +215,15 @@ ssh-copy-id root@192.168.1.100
 
 **Check 3 — Stale multiplexing socket:**
 ```bash
-rm -f ~/.ssh/melisa_mux_*
+# Current installations store sockets in ~/.ssh/sockets/
+rm -f ~/.ssh/sockets/*
 melisa auth add myserver root@192.168.1.100  # Re-register to recreate mux config
 ```
+
+> **Note:** Older versions stored sockets with the `melisa_mux_*` naming pattern directly in `~/.ssh/`. If you have leftover files from an earlier install, clean them up with:
+> ```bash
+> rm -f ~/.ssh/melisa_mux_*
+> ```
 
 ---
 
@@ -279,4 +285,7 @@ ls -la /usr/local/bin/melisa
 cat ~/.config/melisa/active
 cat ~/.config/melisa/profiles.conf
 cat ~/.config/melisa/registry
+
+# Check SSH multiplexing socket (current format)
+ls -la ~/.ssh/sockets/
 ```

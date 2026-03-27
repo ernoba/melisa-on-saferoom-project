@@ -1,35 +1,24 @@
-# Authentication & Profiles
+# Authentication & Connections
 
-The `auth` subcommand manages the registry of remote MELISA servers. All profile data is stored locally in `~/.config/melisa/`.
+The `auth` command group manages your remote server profiles: which servers exist, which one is active, and the SSH configuration that connects you to them.
 
 ---
 
-## `melisa auth add <name> <user@ip>`
+## `melisa auth add <n> <user@host>`
 
-Registers a new remote MELISA server under a memorable nickname.
+Registers a new remote MELISA server profile. This is the **first command** you run after installing the client.
 
 ```bash
 melisa auth add myserver root@192.168.1.100
-melisa auth add homelab alice@10.0.0.5
-melisa auth add production deploy@prod.example.com
 ```
 
-### What Happens Internally
+Replace `myserver` with any nickname and `root@192.168.1.100` with your actual server address.
 
-**1. Directory Initialization (`init_auth`)**
+### What `auth add` Does — Step by Step
 
-Before any auth operation, `init_auth` ensures the configuration directory exists with proper permissions:
+**1. SSH Key Check**
 
-```bash
-mkdir -p ~/.config/melisa
-chmod 700 ~/.config/melisa
-touch ~/.config/melisa/profiles.conf
-touch ~/.config/melisa/active
-```
-
-**2. SSH Key Check (`ensure_ssh_key`)**
-
-Checks for `~/.ssh/id_ed25519` or `~/.ssh/id_rsa`. If neither exists:
+Checks for `~/.ssh/id_ed25519` or `~/.ssh/id_rsa`. If neither exists, generates a modern **Ed25519 keypair** automatically:
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -q
@@ -37,7 +26,7 @@ ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -q
 
 Generates a passphrase-less Ed25519 keypair (required for automated CLI operations without password prompts).
 
-**3. Public Key Distribution**
+**2. Public Key Distribution**
 
 ```bash
 ssh-copy-id -i ~/.ssh/id_ed25519.pub root@192.168.1.100
@@ -45,26 +34,39 @@ ssh-copy-id -i ~/.ssh/id_ed25519.pub root@192.168.1.100
 
 You'll be prompted for the **server's password once**. After this, all subsequent connections use key authentication.
 
-**4. SSH Multiplexing Configuration**
+**3. SSH Multiplexing Configuration**
 
-Appends to `~/.ssh/config`:
+Creates `~/.ssh/sockets/` and appends to `~/.ssh/config`:
 
 ```
 Host 192.168.1.100
+  User root
   ControlMaster auto
-  ControlPath ~/.ssh/melisa_mux_%h_%p_%r
+  ControlPath ~/.ssh/sockets/%r@%h:%p
   ControlPersist 10m
 ```
 
-`ControlMaster auto` keeps a single master SSH connection alive for 10 minutes. All subsequent commands reuse this connection, making commands nearly instantaneous instead of incurring SSH handshake overhead on every call.
+`ControlMaster auto` keeps a single master SSH connection alive for 10 minutes after the last use. All subsequent commands reuse this connection via the socket at `~/.ssh/sockets/`, making commands nearly instantaneous instead of incurring SSH handshake overhead on every call.
+
+**4. MELISA Username Prompt**
+
+After key setup, the client asks for your **MELISA application username** on the remote server. This is the username you log in with inside the MELISA environment — it may differ from your SSH login user (e.g., you SSH as `root` but your MELISA identity is `alice`):
+
+```
+[SETUP] Enter your MELISA username on this server (leave blank if same as SSH user):
+```
+
+Leave it blank to use the SSH login user as both the transport and the MELISA identity. The client stores this separately so it can correctly resolve project paths (e.g., `/home/alice/myapp/` vs. `/home/root/myapp/`).
 
 **5. Profile Storage**
 
-Appends to `~/.config/melisa/profiles.conf`:
+Appends to `~/.config/melisa/profiles.conf` in a pipe-extended key-value format:
 
 ```
-myserver=root@192.168.1.100
+myserver=root@192.168.1.100|alice
 ```
+
+The format is `name=ssh_connection|melisa_username`. The SSH connection (`root@192.168.1.100`) is used for transport; the MELISA username (`alice`) is used to resolve workspace paths on the server. If the MELISA username is the same as the SSH user, it is still stored for explicitness.
 
 **6. Auto-activation**
 
@@ -72,7 +74,7 @@ Writes `myserver` to `~/.config/melisa/active`, making it the default for all fu
 
 ---
 
-## `melisa auth switch <name>`
+## `melisa auth switch <n>`
 
 Changes the active server without re-configuring anything:
 
@@ -102,16 +104,16 @@ melisa auth list
 
 ```
 === MELISA REMOTE SERVER REGISTRY ===
-  * myserver      (root@192.168.1.100)  <- [ACTIVE]
+  * myserver      (root@192.168.1.100) [melisa: alice]  <- [ACTIVE]
     production    (deploy@prod.example.com)
     homelab       (alice@10.0.0.5)
 ```
 
-The `*` prefix and `<- [ACTIVE]` suffix are shown on the currently active server. Reads directly from `profiles.conf`.
+The `*` prefix and `<- [ACTIVE]` suffix mark the currently active server. The optional `[melisa: <user>]` tag is shown when the stored MELISA username differs from the SSH user. Reads directly from `profiles.conf`.
 
 ---
 
-## `melisa auth remove <name>`
+## `melisa auth remove <n>`
 
 Unregisters a server profile:
 
@@ -129,13 +131,17 @@ If you remove the currently active server, you'll need to run `auth switch` to s
 
 ### `~/.config/melisa/profiles.conf`
 
-Plain key-value store, one profile per line:
+Plain key-value store, one profile per line. Each line stores both the SSH transport and the MELISA application identity:
 
 ```
-myserver=root@192.168.1.100
-production=deploy@prod.example.com
-homelab=alice@10.0.0.5
+myserver=root@192.168.1.100|alice
+production=deploy@prod.example.com|deploy
+homelab=alice@10.0.0.5|alice
 ```
+
+Format: `name=user@host|melisa_username`
+
+> **Note for profiles registered before v0.1.2:** Older entries in the format `name=user@host` (without the pipe) are still supported. The client falls back to using the SSH username as the MELISA identity in that case.
 
 ### `~/.config/melisa/active`
 
@@ -147,27 +153,60 @@ myserver
 
 ### `~/.config/melisa/registry`
 
-Pipe-delimited project path mappings:
+Pipe-delimited project path mappings (managed automatically by `clone` and `get`):
 
 ```
 myapp|/home/user/projects/myapp
 backend|/home/user/work/backend
 ```
 
-This registry is managed automatically by `clone` and `get` commands. `sync` reads it to locate your project root.
+`sync` reads this to locate your project root.
 
 ---
 
-## Resolving the Active Connection
+## Resolving the Active Connection (Internal)
 
-The `get_active_conn` function (used internally by all `exec.sh` functions) resolves the current connection string:
+Three internal functions in `auth.sh` resolve the active connection:
+
+**`get_active_conn`** — returns only the SSH connection string (`user@host`), stripping the MELISA username portion:
 
 ```bash
 get_active_conn() {
-    local name=$(cat "$ACTIVE_FILE" 2>/dev/null)
-    if [ -z "$name" ]; then echo ""; return; fi
-    grep "^${name}=" "$PROFILE_FILE" | cut -d'=' -f2
+    if [ ! -f "$ACTIVE_FILE" ]; then return 1; fi
+    local active
+    active=$(cat "$ACTIVE_FILE")
+
+    local entry
+    entry=$(grep "^${active}=" "$PROFILE_FILE" | cut -d'=' -f2)
+
+    # Strip the "|melisa_user" suffix — return ONLY the "user@host" part
+    local conn
+    conn=$(echo "$entry" | cut -d'|' -f1)
+
+    if [ -z "$conn" ]; then return 1; fi
+    echo "$conn"
 }
 ```
 
-Returns empty string if no active profile is set, which causes `ensure_connected` to abort with an error and the tip to add a server.
+Returns empty / exit code 1 if no active profile is set, which causes `ensure_connected` to abort with an error and the tip to add a server.
+
+**`get_remote_user`** — returns only the MELISA username (the part after `|`):
+
+```bash
+get_remote_user() {
+    # Reads the full stored value and extracts the part after "|"
+    # Returns empty string if no "|" separator exists (legacy profile)
+    echo "$raw" | cut -s -d'|' -f2
+}
+```
+
+**`get_active_melisa_user`** — returns the MELISA username, falling back to the SSH user if not set:
+
+```bash
+get_active_melisa_user() {
+    # Returns the melisa_user stored after "|"
+    # If none was stored, falls back to the SSH login username (before "@")
+}
+```
+
+These three functions are used by `exec.sh` to correctly route SSH transport and workspace path resolution independently, which matters when you SSH as `root` but your projects live in `/home/alice/`.

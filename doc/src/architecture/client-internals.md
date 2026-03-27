@@ -104,14 +104,19 @@ The boundary check (`"${path}/"*` not just `"${path}"*`) prevents `/projects/app
 
 ## SSH Multiplexing Deep Dive
 
-When `auth add` configures multiplexing, it writes to `~/.ssh/config`:
+When `auth add` configures multiplexing, it creates `~/.ssh/sockets/` and writes to `~/.ssh/config`:
 
 ```
 Host 192.168.1.100
+  User root
   ControlMaster auto
-  ControlPath ~/.ssh/melisa_mux_192.168.1.100_22_root
+  ControlPath ~/.ssh/sockets/%r@%h:%p
   ControlPersist 10m
 ```
+
+The `ControlPath` pattern `%r@%h:%p` expands at runtime to the actual connection parameters — for example, `root@192.168.1.100:22` — and resolves to a Unix domain socket file at `~/.ssh/sockets/root@192.168.1.100:22`.
+
+> **Note:** Previous versions used `ControlPath ~/.ssh/melisa_mux_%h_%p_%r`. If you have old socket files under that pattern, you can remove them with `rm -f ~/.ssh/melisa_mux_*`. Current installations use `~/.ssh/sockets/`.
 
 **How it works:**
 
@@ -120,6 +125,31 @@ Host 192.168.1.100
 3. The socket persists for 10 minutes after the last use (`ControlPersist 10m`)
 
 **Impact on MELISA performance:** A command like `melisa --list` (which SSHes to run `melisa --list` on the server) takes ~50ms with multiplexing vs ~500–2000ms for a fresh connection each time.
+
+---
+
+## Profile Storage Format: `auth.sh`
+
+The client stores server profiles in `~/.config/melisa/profiles.conf` using a pipe-extended key-value format:
+
+```
+name=user@host|melisa_username
+```
+
+For example:
+```
+myserver=root@192.168.1.100|alice
+```
+
+The two-field design separates **SSH transport** (`root@192.168.1.100`) from **MELISA application identity** (`alice`). This matters when you SSH as `root` but your projects and workspace on the server are under `/home/alice/`.
+
+Three getter functions handle the resolution:
+
+| Function | Returns |
+|----------|---------|
+| `get_active_conn` | SSH connection only (`root@192.168.1.100`) — strips `\|melisa_user` |
+| `get_remote_user` | MELISA username only (`alice`) — part after `\|` |
+| `get_active_melisa_user` | MELISA username with fallback to SSH user |
 
 ---
 
