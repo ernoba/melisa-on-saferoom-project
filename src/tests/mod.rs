@@ -2,16 +2,25 @@
 /// MELISA - Unit Test Module
 /// File: src/tests/mod.rs
 ///
-/// Cara penggunaan:
-///   cargo test                    # semua tes
-///   cargo test distro             # tes distro saja
-///   cargo test -- --nocapture     # lihat output println!
+/// Usage:
+///   cargo test                    # run all tests
+///   cargo test distro             # run only distro tests
+///   cargo test -- --nocapture     # view unfiltered println! / debug output
 /// =============================================================================
+
+/// Prints raw debug information if the `MELISA_DEBUG` environment variable is set.
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        if std::env::var("MELISA_DEBUG").unwrap_or_else(|_| "0".to_string()) == "1" {
+            eprintln!("[DEBUG] {}", format_args!($($arg)*));
+        }
+    };
+}
 
 // ============================================================
 // TEST: src/distros/distro.rs
-// Fungsi yang diuji: parse_distro_list(), generate_slug()
-// CATATAN: Ubah visibility di distro.rs menjadi pub(crate)
+// Tested functions: parse_distro_list(), generate_slug()
+// NOTE: Change visibility in distro.rs to pub(crate)
 // ============================================================
 #[cfg(test)]
 mod distro_tests {
@@ -19,8 +28,9 @@ mod distro_tests {
 
     #[test]
     fn test_generate_slug_amd64() {
-        // ubuntu + 22.04 + amd64 → "ubu-22.04-x64"
+        // ubuntu + 22.04 + amd64 -> "ubu-22.04-x64"
         let slug = generate_slug_pub("ubuntu", "22.04", "amd64");
+        debug_log!("Generated slug for ubuntu/22.04/amd64: {}", slug);
         assert_eq!(slug, "ubu-22.04-x64");
     }
 
@@ -38,14 +48,14 @@ mod distro_tests {
 
     #[test]
     fn test_generate_slug_unknown_arch() {
-        // Arch yang tidak dikenal: gunakan apa adanya
+        // Unknown architecture: use as is
         let slug = generate_slug_pub("fedora", "39", "riscv64");
         assert_eq!(slug, "fed-39-riscv64");
     }
 
     #[test]
     fn test_generate_slug_long_name_truncated() {
-        // Nama panjang hanya diambil 3 karakter pertama
+        // Long names are truncated to the first 3 characters
         let slug = generate_slug_pub("archlinux", "base", "amd64");
         assert_eq!(slug, "arc-base-x64");
     }
@@ -59,6 +69,7 @@ ubuntu       22.04   amd64        default
 debian       12      arm64        default
 alpine       3.18    i386         default
 ";
+        debug_log!("Parsing valid distro list input:\n{}", input);
         let result = parse_distro_list_pub(input);
         assert_eq!(result.len(), 3);
 
@@ -96,10 +107,10 @@ voidlinux    5     amd64 default
 
         let check = |name: &str, expected_pm: &str| {
             let d = result.iter().find(|d| d.name == name)
-                .unwrap_or_else(|| panic!("distro '{}' tidak ditemukan", name));
+                .unwrap_or_else(|| panic!("Distro '{}' not found in parsed result", name));
             assert_eq!(
                 d.pkg_manager, expected_pm,
-                "pkg_manager untuk '{}' salah: expected='{}', got='{}'",
+                "Incorrect pkg_manager for '{}': expected='{}', got='{}'",
                 name, expected_pm, d.pkg_manager
             );
         };
@@ -114,7 +125,7 @@ voidlinux    5     amd64 default
         check("alpine",    "apk");
         check("archlinux", "pacman");
         check("opensuse",  "zypper");
-        check("voidlinux", "apt"); // fallback ke apt
+        check("voidlinux", "apt"); // fallbacks to apt
     }
 
     #[test]
@@ -126,7 +137,7 @@ Distribution Release Architecture Variant
 ubuntu 22.04 amd64 default
 ";
         let result = parse_distro_list_pub(input);
-        // Hanya 1 baris data yang valid, header harus dibuang
+        // Only 1 valid data line; headers must be discarded
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "ubuntu");
     }
@@ -134,13 +145,14 @@ ubuntu 22.04 amd64 default
     #[test]
     fn test_parse_distro_list_empty_input() {
         let result = parse_distro_list_pub("");
-        assert!(result.is_empty(), "Input kosong harus menghasilkan list kosong");
+        assert!(result.is_empty(), "Empty input must yield an empty list");
     }
 
     #[test]
     fn test_parse_distro_list_incomplete_line() {
-        // Baris dengan kurang dari 4 kolom harus dibuang
+        // Lines with fewer than 4 columns must be discarded
         let input = "ubuntu 22.04 amd64\ndebian 12 arm64 default\n";
+        debug_log!("Parsing incomplete distro line:\n{}", input);
         let result = parse_distro_list_pub(input);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "debian");
@@ -149,7 +161,7 @@ ubuntu 22.04 amd64 default
 
 // ============================================================
 // TEST: src/distros/host_distro.rs
-// Fungsi yang diuji: get_distro_config()
+// Tested functions: get_distro_config()
 // ============================================================
 #[cfg(test)]
 mod host_distro_tests {
@@ -191,7 +203,7 @@ mod host_distro_tests {
     #[test]
     fn test_unknown_distro_fallback() {
         let cfg = get_distro_config(&HostDistro::Unknown("nixos".to_string()));
-        // Harus fallback ke apt-get / ufw
+        // Must fallback to apt-get / ufw
         assert_eq!(cfg.pkg_manager, "apt-get");
         assert_eq!(cfg.firewall_tool, FirewallKind::Ufw);
         assert_eq!(cfg.ssh_service, "ssh");
@@ -200,8 +212,7 @@ mod host_distro_tests {
 
 // ============================================================
 // TEST: src/core/metadata.rs
-// Fungsi yang diuji: validate_container_name() (fungsi baru)
-// inject_distro_metadata() (dengan tempdir)
+// Tested functions: validate_container_name(), inject_distro_metadata()
 // ============================================================
 #[cfg(test)]
 mod metadata_tests {
@@ -213,7 +224,7 @@ mod metadata_tests {
         for name in &valid_names {
             assert!(
                 validate_container_name(name),
-                "Nama '{}' seharusnya valid", name
+                "Name '{}' should be valid", name
             );
         }
     }
@@ -234,15 +245,15 @@ mod metadata_tests {
     #[test]
     fn test_invalid_container_name_dotdot() {
         assert!(!validate_container_name(".."));
-        // ".." di tengah masih oke karena tidak sama persis
-        // tapi "/foo/.." tidak oke karena ada slash
+        // ".." in the middle is acceptable because it is not an exact match
+        // However, "/foo/.." is rejected due to the slash
     }
 
     #[test]
     fn test_melisa_error_display() {
         let err = MelisaError::InvalidName("test/bad".to_string());
         let msg = format!("{}", err);
-        assert!(msg.contains("test/bad"), "Error message harus menyebut nama yang salah");
+        assert!(msg.contains("test/bad"), "Error message must mention the invalid name");
     }
 
     #[test]
@@ -275,14 +286,15 @@ mod metadata_tests {
             pkg_manager: "apt".to_string(),
         };
 
-        // Percobaan path traversal harus ditolak
+        // Path traversal attempts must be rejected
+        debug_log!("Testing path traversal injection protection");
         let result = inject_distro_metadata("/tmp", "../etc", &meta).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             MelisaError::SecurityViolation(name) => {
                 assert_eq!(name, "../etc");
             }
-            e => panic!("Error yang diharapkan SecurityViolation, bukan: {:?}", e),
+            e => panic!("Expected SecurityViolation error, but got: {:?}", e),
         }
     }
 
@@ -311,7 +323,7 @@ mod metadata_tests {
         use crate::core::container::DistroMetadata;
         use std::path::PathBuf;
 
-        // Buat temp dir yang mirip struktur LXC
+        // Create a temporary directory mimicking the LXC structure
         let tmp = std::env::temp_dir();
         let container_name = format!("melisa-test-{}", uuid::Uuid::new_v4());
         let rootfs_etc = tmp.join(&container_name).join("rootfs").join("etc");
@@ -328,15 +340,17 @@ mod metadata_tests {
 
         // Inject
         let base_path = tmp.to_str().unwrap();
+        debug_log!("Injecting metadata to simulated container: {}", container_name);
         let result = inject_distro_metadata(base_path, &container_name, &meta).await;
-        assert!(result.is_ok(), "inject_distro_metadata gagal: {:?}", result);
+        assert!(result.is_ok(), "inject_distro_metadata failed: {:?}", result);
 
-        // Verifikasi file ada
+        // Verify the file exists
         let info_path = rootfs_etc.join("melisa-info");
-        assert!(info_path.exists(), "File melisa-info tidak dibuat");
+        assert!(info_path.exists(), "melisa-info file was not created");
 
-        // Baca dan cek konten
+        // Read and verify content
         let content = std::fs::read_to_string(&info_path).unwrap();
+        debug_log!("Injected metadata content:\n{}", content);
         assert!(content.contains(&format!("MELISA_INSTANCE_NAME={}", container_name)));
         assert!(content.contains("DISTRO_NAME=debian"));
         assert!(content.contains("DISTRO_RELEASE=12"));
@@ -351,7 +365,7 @@ mod metadata_tests {
 
 // ============================================================
 // TEST: src/core/container.rs
-// Fungsi yang diuji: get_pkg_update_cmd() (fungsi baru yang diekstrak)
+// Tested functions: get_pkg_update_cmd()
 // ============================================================
 #[cfg(test)]
 mod container_tests {
@@ -392,7 +406,7 @@ mod container_tests {
 
 // ============================================================
 // TEST: src/core/project_management.rs
-// Fungsi yang diuji: validate_project_input() (fungsi baru)
+// Tested functions: validate_project_input()
 // ============================================================
 #[cfg(test)]
 mod project_management_tests {
@@ -432,7 +446,7 @@ mod project_management_tests {
 
 // ============================================================
 // TEST: src/cli/executor.rs
-// Fungsi yang diuji: parse_command() (fungsi baru yang diekstrak)
+// Tested functions: parse_command()
 // ============================================================
 #[cfg(test)]
 mod executor_tests {
@@ -441,6 +455,7 @@ mod executor_tests {
     #[test]
     fn test_parse_basic_command() {
         let (parts, audit) = parse_command("melisa --list");
+        debug_log!("Parsed basic command: parts={:?}, audit={}", parts, audit);
         assert_eq!(parts, vec!["melisa", "--list"]);
         assert!(!audit);
     }

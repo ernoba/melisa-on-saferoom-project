@@ -3,20 +3,20 @@
 # MELISA — Unit Tests: Tunnel Mode & Cross-Region Connectivity
 # =============================================================================
 #
-# Cakupan Tests:
-#   Suite 1 : Validasi parameter tunnel (port, container name)
-#   Suite 2 : Manajemen file .meta dan .pid
-#   Suite 3 : Logika exec_tunnel_list (listing tunnel aktif)
-#   Suite 4 : Logika exec_tunnel_stop (menghentikan tunnel)
-#   Suite 5 : Skenario cross-region (Amerika → Indonesia via public IP)
-#   Suite 6 : Deteksi konflik port lokal
-#   Suite 7 : Robustness (tunnel mati mendadak, file korup, dll)
-#   Suite 8 : Konektivitas SSH mock (simulasi koneksi cross-region)
+# Test Coverage:
+#   Suite 1 : Tunnel parameter validation (port, container name)
+#   Suite 2 : .meta and .pid file management
+#   Suite 3 : exec_tunnel_list logic (listing active tunnels)
+#   Suite 4 : exec_tunnel_stop logic (stopping tunnels)
+#   Suite 5 : Cross-region scenario (US -> Indonesia via public IP)
+#   Suite 6 : Local port conflict detection
+#   Suite 7 : Robustness (sudden tunnel death, corrupted files, etc.)
+#   Suite 8 : Mocked SSH connectivity (simulating cross-region connection)
 #
-# Cara Jalankan:
+# Execution:
 #   python3 test_tunnel_and_crossregion.py -v
-#   python3 test_tunnel_and_crossregion.py -v TunnelPortValidation
-#   python3 test_tunnel_and_crossregion.py -v CrossRegionConnectivity
+#   python3 test_tunnel_and_crossregion.py -v TestTunnelPortValidation
+#   python3 test_tunnel_and_crossregion.py --debug
 #
 # =============================================================================
 
@@ -34,10 +34,9 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, Tuple
-from unittest.mock import patch, MagicMock
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Lokasi project
+# Project Location
 # ─────────────────────────────────────────────────────────────────────────────
 def find_melisa_root() -> Optional[Path]:
     candidates = [
@@ -57,7 +56,7 @@ MELISA_ROOT = find_melisa_root()
 CLIENT_SRC  = MELISA_ROOT / "src" / "melisa_client" / "src" if MELISA_ROOT else None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Warna terminal
+# Terminal Colors & Global Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 GREEN  = "\033[32m"
 RED    = "\033[31m"
@@ -66,14 +65,30 @@ CYAN   = "\033[36m"
 BOLD   = "\033[1m"
 RESET  = "\033[0m"
 
+DEBUG_MODE = False
+if "--debug" in sys.argv:
+    DEBUG_MODE = True
+    sys.argv.remove("--debug")
+
 def col(text: str, color: str) -> str:
     return f"{color}{text}{RESET}" if sys.stdout.isatty() else text
 
+def debug_print(cmd_name: str, args: list, rc: int, stdout: str, stderr: str):
+    """Prints raw, unfiltered subprocess output when DEBUG_MODE is active."""
+    if not DEBUG_MODE:
+        return
+    print(f"\n{col('--- [DEBUG: ' + cmd_name + '] ---', YELLOW)}")
+    print(f"{col('Command:', BOLD)} {args}")
+    print(f"{col('Exit Code:', BOLD)} {rc}")
+    print(f"{col('STDOUT:', BOLD)}\n{stdout}")
+    print(f"{col('STDERR:', BOLD)}\n{stderr}")
+    print(col('-----------------------', YELLOW))
+
 # ─────────────────────────────────────────────────────────────────────────────
-# BashEnv — environment terisolasi untuk menguji bash scripts
+# BashEnv — Isolated environment for testing bash modules
 # ─────────────────────────────────────────────────────────────────────────────
 class BashEnv:
-    """Isolated environment untuk menguji bash modules Melisa."""
+    """Isolated environment to test Melisa bash modules."""
 
     def __init__(self, fake_ssh: bool = False):
         self.tmp_dir = tempfile.mkdtemp(prefix="melisa_tunnel_test_")
@@ -87,52 +102,52 @@ class BashEnv:
         self.tunnel_dir.mkdir(parents=True, exist_ok=True)
         self.config_dir = self.home / ".config" / "melisa"
 
-        # Salin bash modules dari source jika ada
+        # Copy bash modules from source if available
         if CLIENT_SRC and CLIENT_SRC.exists():
             for sh_file in CLIENT_SRC.glob("*.sh"):
                 dest = self.lib_dir / sh_file.name
                 shutil.copy2(sh_file, dest)
                 dest.chmod(dest.stat().st_mode | stat.S_IEXEC)
 
-        # Buat fake SSH jika diminta (untuk mock koneksi)
+        # Create a fake SSH binary if requested (for mock connections)
         if fake_ssh:
             self._install_fake_ssh()
 
     def _install_fake_ssh(self, response: str = "10.0.3.5", exit_code: int = 0):
-        """Install fake 'ssh' binary yang me-mock respons server."""
+        """Install a fake 'ssh' binary that mocks server responses."""
         fake_ssh_script = self.bin_dir / "ssh"
         fake_ssh_script.write_text(textwrap.dedent(f"""\
             #!/bin/bash
-            # Fake SSH untuk testing — tidak melakukan koneksi nyata
-            # Tangkap argumen untuk logging
+            # Fake SSH for testing — does not perform actual connections
+            # Capture arguments for logging
             ARGS="$@"
             
-            # Jika diminta IP container (melisa --ip)
+            # If container IP is requested (melisa --ip)
             if echo "$ARGS" | grep -q -- "--ip"; then
                 echo "{response}"
                 exit {exit_code}
             fi
             
-            # Jika -N -f (background tunnel mode) — simulasikan sukses
+            # If -N -f (background tunnel mode) — simulate success
             if echo "$ARGS" | grep -q -- "-N"; then
-                # Spawn process dummy agar PID bisa di-capture
+                # Spawn a dummy process so the PID can be captured
                 sleep 3600 &
                 disown
                 exit {exit_code}
             fi
             
-            # Default: echo args dan exit sukses
+            # Default: echo args and exit successfully
             echo "FAKE_SSH: $ARGS"
             exit {exit_code}
         """))
         fake_ssh_script.chmod(0o755)
 
     def install_fake_ssh_with_ip(self, container_ip: str, exit_code: int = 0):
-        """Install fake SSH yang mengembalikan IP container tertentu."""
+        """Install a fake SSH that returns a specific container IP."""
         self._install_fake_ssh(response=container_ip, exit_code=exit_code)
 
     def install_fake_ssh_failing(self):
-        """Install fake SSH yang selalu gagal (simulasi server tidak terjangkau)."""
+        """Install a fake SSH that always fails (simulating an unreachable server)."""
         fake_ssh_script = self.bin_dir / "ssh"
         fake_ssh_script.write_text(textwrap.dedent("""\
             #!/bin/bash
@@ -143,7 +158,7 @@ class BashEnv:
         fake_ssh_script.chmod(0o755)
 
     def install_fake_ss(self, ports_in_use: list = None):
-        """Install fake 'ss' yang melaporkan port tertentu sedang dipakai."""
+        """Install a fake 'ss' that reports specific ports as being in use."""
         ports_in_use = ports_in_use or []
         lines = "\n".join(
             f"tcp   LISTEN 0  128  0.0.0.0:{p}  0.0.0.0:*"
@@ -158,7 +173,7 @@ class BashEnv:
         fake_ss.chmod(0o755)
 
     def set_active_connection(self, profile_name: str, ssh_conn: str, melisa_user: str = ""):
-        """Set koneksi aktif di config."""
+        """Set the active connection in the configuration."""
         self.config_dir.mkdir(parents=True, exist_ok=True)
         profile_file = self.config_dir / "profiles.conf"
         active_file  = self.config_dir / "active"
@@ -170,7 +185,7 @@ class BashEnv:
 
     def write_meta(self, container: str, remote_port: int, local_port: int,
                    server: str, container_ip: str = "10.0.3.5") -> Path:
-        """Tulis file .meta tunnel (simulasikan tunnel yang sudah ada)."""
+        """Write a tunnel .meta file (simulating an existing tunnel)."""
         key = f"{container}_{remote_port}"
         meta_file = self.tunnel_dir / f"{key}.meta"
         meta_file.write_text(textwrap.dedent(f"""\
@@ -184,7 +199,7 @@ class BashEnv:
         return meta_file
 
     def write_pid(self, container: str, remote_port: int, pid: int) -> Path:
-        """Tulis file .pid tunnel."""
+        """Write a tunnel .pid file."""
         key = f"{container}_{remote_port}"
         pid_file = self.tunnel_dir / f"{key}.pid"
         pid_file.write_text(str(pid) + "\n")
@@ -196,11 +211,11 @@ class BashEnv:
         env_extra: Optional[dict] = None,
         timeout: int = 10
     ) -> Tuple[int, str, str]:
-        """Jalankan bash script di environment terisolasi."""
+        """Execute a bash script within the isolated environment."""
         env = os.environ.copy()
         env["HOME"]  = str(self.home)
         env["PATH"]  = f"{self.bin_dir}:/usr/bin:/bin"
-        # Hapus variabel SSH lingkungan asli
+        # Remove original SSH environment variables
         for var in ["SSH_CLIENT", "SSH_TTY", "SSH_CONNECTION", "SUDO_USER"]:
             env.pop(var, None)
         if env_extra:
@@ -219,16 +234,20 @@ class BashEnv:
             [ -f "$MELISA_LIB/exec.sh"  ] && source "$MELISA_LIB/exec.sh"  2>/dev/null
         """)
         full_script = header + "\n" + script
+        cmd_args = ["bash", "-c", full_script]
         try:
             result = subprocess.run(
-                ["bash", "-c", full_script],
+                cmd_args,
                 capture_output=True, text=True,
                 env=env, timeout=timeout
             )
+            debug_print("BashEnv", cmd_args, result.returncode, result.stdout, result.stderr)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
-            return -1, "", f"TIMEOUT setelah {timeout}s"
+            debug_print("BashEnv", cmd_args, -1, "", f"TIMEOUT after {timeout}s")
+            return -1, "", f"TIMEOUT after {timeout}s"
         except Exception as e:
+            debug_print("BashEnv", cmd_args, -2, "", str(e))
             return -2, "", str(e)
 
     def cleanup(self):
@@ -240,31 +259,31 @@ def has_bash_modules() -> bool:
 
 
 # =============================================================================
-# SUITE 1: Validasi Parameter Tunnel
+# SUITE 1: Tunnel Parameter Validation
 # =============================================================================
 class TestTunnelPortValidation(unittest.TestCase):
     """
-    Menguji validasi port pada exec_tunnel() — logika pure tanpa SSH.
-    Mirror dari logika Bash di exec.sh.
+    Tests port validation in exec_tunnel() — pure logic without SSH.
+    Mirrors the Bash logic in exec.sh.
     """
 
     def _validate_port(self, port_str: str) -> bool:
-        """Mirror dari validasi port di exec_tunnel()."""
+        """Mirror of port validation in exec_tunnel()."""
         return bool(port_str) and port_str.isdigit() and 1 <= int(port_str) <= 65535
 
     def _validate_tunnel_args(self, container: str, remote_port: str) -> bool:
-        """Mirror dari guard di exec_tunnel()."""
+        """Mirror of the parameter guard in exec_tunnel()."""
         return bool(container) and bool(remote_port)
 
     def test_valid_port_numbers(self):
         for port in ["80", "443", "3000", "8080", "5432", "27017", "65535"]:
             with self.subTest(port=port):
-                self.assertTrue(self._validate_port(port), f"Port '{port}' seharusnya valid")
+                self.assertTrue(self._validate_port(port), f"Port '{port}' should be valid")
 
     def test_reject_non_numeric_port(self):
         for bad in ["abc", "3000abc", "!", "", "3.14", "3000.0"]:
             with self.subTest(port=bad):
-                self.assertFalse(self._validate_port(bad), f"'{bad}' seharusnya ditolak")
+                self.assertFalse(self._validate_port(bad), f"'{bad}' should be rejected")
 
     def test_reject_port_zero(self):
         self.assertFalse(self._validate_port("0"))
@@ -274,7 +293,7 @@ class TestTunnelPortValidation(unittest.TestCase):
         self.assertFalse(self._validate_port("99999"))
 
     def test_local_port_defaults_to_remote(self):
-        """Jika local_port tidak diberikan, harus sama dengan remote_port."""
+        """If local_port is not provided, it should default to remote_port."""
         remote_port = "3000"
         local_port  = ""
         result = local_port if local_port else remote_port
@@ -287,21 +306,21 @@ class TestTunnelPortValidation(unittest.TestCase):
         self.assertTrue(self._validate_tunnel_args("myapp", "3000"))
 
     def test_container_name_with_dash(self):
-        """Nama container boleh mengandung tanda '-'."""
+        """Container names are allowed to contain dashes '-'."""
         self.assertTrue(self._validate_tunnel_args("my-webapp", "8080"))
 
     def test_container_name_with_underscore(self):
         self.assertTrue(self._validate_tunnel_args("web_app", "8080"))
 
     def test_tunnel_key_format(self):
-        """Format TUNNEL_KEY harus: container_port."""
+        """TUNNEL_KEY format must be: container_port."""
         container    = "myapp"
         remote_port  = "3000"
         tunnel_key   = f"{container}_{remote_port}"
         self.assertEqual(tunnel_key, "myapp_3000")
 
     def test_meta_filename_format(self):
-        """Nama file meta harus berakhir dengan .meta."""
+        """Meta file names must end with .meta."""
         tunnel_key = "myapp_3000"
         meta_file  = f"{tunnel_key}.meta"
         pid_file   = f"{tunnel_key}.pid"
@@ -310,10 +329,10 @@ class TestTunnelPortValidation(unittest.TestCase):
 
 
 # =============================================================================
-# SUITE 2: Manajemen File .meta dan .pid
+# SUITE 2: .meta and .pid File Management
 # =============================================================================
 class TestTunnelFileManagement(unittest.TestCase):
-    """Menguji pembuatan, pembacaan, dan penghapusan file metadata tunnel."""
+    """Tests the creation, parsing, and deletion of tunnel metadata files."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="melisa_meta_test_")
@@ -374,14 +393,14 @@ class TestTunnelFileManagement(unittest.TestCase):
         self.assertEqual(pid, 12345)
 
     def test_paired_meta_and_pid_files_exist(self):
-        """Setiap tunnel harus punya pasangan .meta dan .pid."""
+        """Every tunnel must have a paired .meta and .pid file."""
         self._write_meta("api", 5000, 5000, "root@server.id")
         self._write_pid("api", 5000, 99999)
         meta_files = list(self.tunnel_dir.glob("*.meta"))
         pid_files  = list(self.tunnel_dir.glob("*.pid"))
         self.assertEqual(len(meta_files), 1)
         self.assertEqual(len(pid_files),  1)
-        # Stem (nama tanpa ekstensi) harus sama
+        # Stems (names without extensions) must match
         self.assertEqual(meta_files[0].stem, pid_files[0].stem)
 
     def test_multiple_tunnels_have_separate_files(self):
@@ -394,14 +413,14 @@ class TestTunnelFileManagement(unittest.TestCase):
     def test_cleanup_removes_both_files(self):
         meta = self._write_meta("temp", 7000, 7000, "root@server.id")
         pid  = self._write_pid("temp", 7000, 11111)
-        # Simulasi cleanup
+        # Simulate cleanup
         meta.unlink()
         pid.unlink()
         self.assertFalse(meta.exists())
         self.assertFalse(pid.exists())
 
     def test_meta_file_parsing_with_equals_in_value(self):
-        """Nilai yang mengandung '=' (misalnya URL) harus dibaca benar."""
+        """Values containing '=' (e.g., URLs) must be read correctly."""
         key = "special_3000"
         meta = self.tunnel_dir / f"{key}.meta"
         meta.write_text("container=special\nremote_port=3000\nlocal_port=3000\nserver=root@10.0.0.1\nstarted=2025-01-15 10:00:00\ncontainer_ip=10.0.3.7\n")
@@ -409,7 +428,7 @@ class TestTunnelFileManagement(unittest.TestCase):
         self.assertEqual(data["container"], "special")
 
     def test_meta_file_with_unknown_pid_string(self):
-        """PID file boleh berisi 'unknown' jika proses tidak bisa di-trace."""
+        """The PID file may contain 'unknown' if the process cannot be traced."""
         key = "myapp_3000"
         pid_file = self.tunnel_dir / f"{key}.pid"
         pid_file.write_text("unknown\n")
@@ -418,12 +437,12 @@ class TestTunnelFileManagement(unittest.TestCase):
 
 
 # =============================================================================
-# SUITE 3: Logika exec_tunnel_list
+# SUITE 3: exec_tunnel_list Logic
 # =============================================================================
 class TestTunnelListLogic(unittest.TestCase):
     """
-    Menguji logika listing tunnel — pure Python, tanpa Bash.
-    Mirror dari exec_tunnel_list() di exec.sh.
+    Tests tunnel listing logic — pure Python, without Bash.
+    Mirrors exec_tunnel_list() in exec.sh.
     """
 
     def setUp(self):
@@ -450,7 +469,7 @@ class TestTunnelListLogic(unittest.TestCase):
             (self.tunnel_dir / f"{key}.pid").write_text(str(pid) + "\n")
 
     def _list_tunnels(self) -> list:
-        """Mirror dari exec_tunnel_list() — baca semua file .meta."""
+        """Mirror of exec_tunnel_list() — reads all .meta files."""
         tunnels = []
         for meta_file in sorted(self.tunnel_dir.glob("*.meta")):
             data = {}
@@ -462,7 +481,7 @@ class TestTunnelListLogic(unittest.TestCase):
             if pid_file.exists():
                 pid_str = pid_file.read_text().strip()
                 data["pid"] = pid_str
-                # Cek apakah proses masih hidup
+                # Check if process is still alive
                 if pid_str.isdigit():
                     try:
                         os.kill(int(pid_str), 0)
@@ -470,7 +489,7 @@ class TestTunnelListLogic(unittest.TestCase):
                     except ProcessLookupError:
                         data["status"] = "DEAD"
                     except PermissionError:
-                        data["status"] = "RUNNING"  # Proses ada, tapi bukan milik kita
+                        data["status"] = "RUNNING"  # Process exists, but not owned by us
                 else:
                     data["status"] = "UNKNOWN"
             else:
@@ -500,29 +519,29 @@ class TestTunnelListLogic(unittest.TestCase):
         self.assertEqual(names, {"frontend", "backend", "database"})
 
     def test_dead_process_marked_dead(self):
-        """PID dari proses yang sudah mati harus ditandai DEAD."""
-        # PID 1 dimiliki init — kita tidak bisa kill-0 dengan aman.
-        # Gunakan PID yang pasti tidak ada: 2147483647 (INT_MAX)
+        """PIDs of processes that have died should be marked as DEAD."""
+        # PID 1 is owned by init — we cannot kill-0 safely.
+        # Use a PID that definitely does not exist: 2147483647 (INT_MAX)
         self._write_tunnel("deadapp", 3000, 3000, "root@server.id", pid=2147483647)
         tunnels = self._list_tunnels()
         self.assertEqual(len(tunnels), 1)
         self.assertEqual(tunnels[0]["status"], "DEAD")
 
     def test_current_process_marked_running(self):
-        """PID proses saat ini (test runner) pasti sedang berjalan."""
+        """The PID of the current process (test runner) is definitely running."""
         self._write_tunnel("liveapp", 8080, 8080, "root@server.id", pid=os.getpid())
         tunnels = self._list_tunnels()
         self.assertEqual(tunnels[0]["status"], "RUNNING")
 
     def test_unknown_pid_marked_unknown(self):
         self._write_tunnel("ghostapp", 9000, 9000, "root@server.id")
-        # Tulis PID file dengan nilai "unknown"
+        # Write PID file with "unknown" string
         (self.tunnel_dir / "ghostapp_9000.pid").write_text("unknown\n")
         tunnels = self._list_tunnels()
         self.assertEqual(tunnels[0]["status"], "UNKNOWN")
 
     def test_meta_without_pid_file_marked_unknown(self):
-        """Jika .pid tidak ada, status harus UNKNOWN (bukan error)."""
+        """If .pid is missing, status should be UNKNOWN (not an error)."""
         self._write_tunnel("nopid", 4000, 4000, "root@server.id", pid=None)
         tunnels = self._list_tunnels()
         self.assertEqual(len(tunnels), 1)
@@ -530,12 +549,12 @@ class TestTunnelListLogic(unittest.TestCase):
 
 
 # =============================================================================
-# SUITE 4: Logika exec_tunnel_stop
+# SUITE 4: exec_tunnel_stop Logic
 # =============================================================================
 class TestTunnelStopLogic(unittest.TestCase):
     """
-    Menguji logika penghentian tunnel — pure Python.
-    Mirror dari exec_tunnel_stop() di exec.sh.
+    Tests tunnel termination logic — pure Python.
+    Mirrors exec_tunnel_stop() in exec.sh.
     """
 
     def setUp(self):
@@ -558,7 +577,7 @@ class TestTunnelStopLogic(unittest.TestCase):
             (self.tunnel_dir / f"{key}.pid").write_text(str(pid) + "\n")
 
     def _stop_tunnel(self, container: str, remote_port: Optional[int] = None) -> int:
-        """Mirror dari exec_tunnel_stop() — return jumlah tunnel yang dihentikan."""
+        """Mirror of exec_tunnel_stop() — returns the number of stopped tunnels."""
         stopped = 0
         for meta_file in list(self.tunnel_dir.glob("*.meta")):
             data = {}
@@ -584,7 +603,7 @@ class TestTunnelStopLogic(unittest.TestCase):
         return stopped
 
     def test_stop_existing_tunnel_removes_files(self):
-        # Spawn dummy process yang aman untuk di-kill
+        # Spawn a dummy process that is safe to kill
         dummy = subprocess.Popen(["sleep", "60"])
         try:
             self._write_tunnel("myapp", 3000, pid=dummy.pid)
@@ -601,7 +620,7 @@ class TestTunnelStopLogic(unittest.TestCase):
         self.assertEqual(n, 0)
 
     def test_stop_specific_port_only(self):
-        """tunnel-stop app 3000 hanya menghentikan tunnel port 3000."""
+        """tunnel-stop app 3000 should only stop the tunnel on port 3000."""
         self._write_tunnel("app", 3000)
         self._write_tunnel("app", 4000)
         n = self._stop_tunnel("app", remote_port=3000)
@@ -611,8 +630,8 @@ class TestTunnelStopLogic(unittest.TestCase):
         self.assertIn("4000", remaining[0].name)
 
     def test_stop_all_ports_for_container(self):
-        """tunnel-stop app (tanpa port) menghentikan semua tunnel container."""
-        # PID yang pasti tidak ada — aman di-kill tanpa efek samping
+        """tunnel-stop app (without port) should stop all tunnels for the container."""
+        # PIDs that definitely do not exist — safe to kill without side effects
         self._write_tunnel("app", 3000, pid=2147483647)
         self._write_tunnel("app", 4000, pid=2147483646)
         self._write_tunnel("app", 5000, pid=2147483645)
@@ -630,35 +649,35 @@ class TestTunnelStopLogic(unittest.TestCase):
         self.assertIn("app2", remaining[0].name)
 
     def test_stop_dead_process_still_cleans_files(self):
-        """Tunnel yang prosesnya sudah mati tetap harus dihapus file-nya."""
-        self._write_tunnel("deadapp", 3000, pid=2147483647)  # PID tidak ada
+        """Tunnels with dead processes must still have their files removed."""
+        self._write_tunnel("deadapp", 3000, pid=2147483647)  # Dead PID
         n = self._stop_tunnel("deadapp")
         self.assertEqual(n, 1)
         self.assertEqual(list(self.tunnel_dir.glob("*.meta")), [])
 
 
 # =============================================================================
-# SUITE 5: Analisis & Test Cross-Region (Amerika → Indonesia)
+# SUITE 5: Cross-Region Analysis & Tests (US -> Indonesia)
 # =============================================================================
 class TestCrossRegionConnectivity(unittest.TestCase):
     """
-    Menganalisis dan menguji skenario koneksi lintas negara:
-    Client di Amerika ↔ Server Melisa di Indonesia.
+    Analyzes and tests cross-region connection scenarios:
+    Client in the US <-> Melisa Server in Indonesia.
 
-    Jawaban Analisis:
-    ✅ YA, bisa terhubung jika server Indonesia punya PUBLIC IP dan port 22 terbuka.
-    ✅ YA, bisa akses HTTP container via 'melisa tunnel' (SSH -L port forwarding).
-    ⚠️  TIDAK bisa jika server di belakang NAT/CGNAT (hanya punya IP private).
+    Analysis Results:
+    [OK] YES, connection is possible if the Indonesian server has a PUBLIC IP and open port 22.
+    [OK] YES, container HTTP access via 'melisa tunnel' (SSH -L port forwarding) is possible.
+    [FAIL] NO, not possible if the server is behind NAT/CGNAT (only has a private IP).
     
-    Alur koneksi cross-region:
-    [Client Amerika]                    [Server Indonesia]           [Container]
+    Cross-region connection flow:
+    [US Client]                         [Indonesian Server]          [Container]
     localhost:8080  ──SSH -L tunnel──▶  public_ip:22  ──▶  10.0.3.5:8080
     """
 
     def test_public_ip_format_validation(self):
         """
-        Server harus dikonfigurasi dengan IP publik / hostname publik,
-        bukan IP private (192.168.x.x, 10.x.x.x, 172.16-31.x.x).
+        The server must be configured with a public IP / public hostname,
+        not a private IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x).
         """
         def is_private_ip(ip: str) -> bool:
             parts = ip.split(".")
@@ -680,34 +699,34 @@ class TestCrossRegionConnectivity(unittest.TestCase):
                 return True
             return False
 
-        # IP Private — TIDAK bisa diakses dari Amerika
+        # Private IPs — CANNOT be accessed from the US
         self.assertTrue(is_private_ip("192.168.1.100"),
-            "LAN IP seharusnya terdeteksi sebagai private")
+            "LAN IP should be detected as private")
         self.assertTrue(is_private_ip("10.0.0.5"),
-            "10.x.x.x seharusnya private")
+            "10.x.x.x should be private")
         self.assertTrue(is_private_ip("172.20.0.1"),
-            "172.20.x.x seharusnya private")
+            "172.20.x.x should be private")
 
-        # IP Publik — BISA diakses dari Amerika
+        # Public IPs — CAN be accessed from the US
         self.assertFalse(is_private_ip("203.0.113.5"),
-            "IP publik TEST-NET seharusnya bukan private")
+            "TEST-NET public IP should not be private")
         self.assertFalse(is_private_ip("103.145.100.50"),
-            "IP Telkom/ISP Indonesia seharusnya publik")
+            "Telkom/ISP Indonesia IP should be public")
         self.assertFalse(is_private_ip("52.221.30.10"),
-            "IP AWS Singapore seharusnya publik")
+            "AWS Singapore IP should be public")
 
     def test_tunnel_command_builds_ssh_L_correctly(self):
         """
-        Perintah SSH yang dibangun exec_tunnel() harus menggunakan -L:
+        The SSH command built by exec_tunnel() must utilize -L:
         ssh -N -f -L local_port:container_ip:remote_port CONN
         """
         container    = "mywebapp"
         remote_port  = 3000
         local_port   = 3000
         container_ip = "10.0.3.5"
-        server_conn  = "root@203.0.113.5"  # IP publik server Indonesia
+        server_conn  = "root@203.0.113.5"  # Public IP for Indonesian server
 
-        # Bangun perintah SSH seperti exec_tunnel()
+        # Build the SSH command like exec_tunnel()
         ssh_cmd = [
             "ssh", "-N", "-f",
             "-L", f"{local_port}:{container_ip}:{remote_port}",
@@ -718,26 +737,26 @@ class TestCrossRegionConnectivity(unittest.TestCase):
             server_conn
         ]
 
-        # Verifikasi komponen penting
+        # Verify critical components
         self.assertIn("-N",     ssh_cmd)  # No command (background tunnel)
-        self.assertIn("-f",     ssh_cmd)  # Fork ke background
+        self.assertIn("-f",     ssh_cmd)  # Fork to background
         self.assertIn("-L",     ssh_cmd)  # Local port forwarding
         self.assertIn(f"{local_port}:{container_ip}:{remote_port}", ssh_cmd)
         self.assertIn(server_conn, ssh_cmd)
 
     def test_cross_region_tunnel_url(self):
         """
-        Setelah tunnel aktif, URL akses di Amerika seharusnya localhost:local_port,
-        bukan langsung IP Indonesia.
+        Once the tunnel is active, the access URL in the US should be localhost:local_port,
+        not the direct Indonesian IP.
         """
         local_port = 8080
         access_url = f"http://localhost:{local_port}"
         self.assertEqual(access_url, "http://localhost:8080")
-        # Bukan IP server Indonesia langsung
+        # Ensure it's not the direct Indonesian server IP
         self.assertNotIn("203.0.113", access_url)
 
     def test_route_description_cross_region(self):
-        """Verifikasi format deskripsi route yang ditampilkan ke user."""
+        """Verify the routing description format displayed to the user."""
         local_port   = 3000
         server_conn  = "root@203.0.113.5"
         container_ip = "10.0.3.5"
@@ -751,7 +770,7 @@ class TestCrossRegionConnectivity(unittest.TestCase):
 
     def test_profile_with_public_ip_structure(self):
         """
-        Format profile untuk server Indonesia (dari Amerika):
+        Profile format for an Indonesian server (accessed from the US):
         profiles.conf: indonesia=root@103.145.100.50|deployuser
         """
         profile_entry = "indonesia=root@103.145.100.50|deployuser"
@@ -763,16 +782,16 @@ class TestCrossRegionConnectivity(unittest.TestCase):
 
     def test_nat_detection_logic(self):
         """
-        Server di belakang NAT/CGNAT tidak bisa diakses langsung.
-        Deteksi berdasarkan IP private di CONN string.
+        Servers behind NAT/CGNAT cannot be accessed directly.
+        Detection is based on the private IP in the CONN string.
         """
         def is_reachable_from_internet(conn_str: str) -> bool:
-            """Cek apakah CONN menggunakan IP publik yang bisa diakses lintas negara."""
+            """Check if CONN utilizes a public IP accessible across regions."""
             host = conn_str.split("@")[-1] if "@" in conn_str else conn_str
-            # Jika hostname (bukan IP), asumsikan bisa resolve ke publik
+            # If it's a hostname (not IP), assume it resolves publicly
             if not host[0].isdigit():
-                return True  # Domain name — bisa publik
-            # Cek apakah private
+                return True  # Domain name — can be public
+            # Check if private
             parts = host.split(".")
             if len(parts) == 4:
                 try:
@@ -787,47 +806,47 @@ class TestCrossRegionConnectivity(unittest.TestCase):
                     pass
             return True
 
-        # Server dengan IP publik → bisa diakses dari Amerika ✅
+        # Server with a public IP -> accessible from the US [OK]
         self.assertTrue(is_reachable_from_internet("root@203.0.113.5"))
         self.assertTrue(is_reachable_from_internet("root@103.145.100.50"))
         self.assertTrue(is_reachable_from_internet("deploy@myserver.example.com"))
 
-        # Server dengan IP private → TIDAK bisa dari Amerika ❌
+        # Server with a private IP -> NOT accessible from the US [FAIL]
         self.assertFalse(is_reachable_from_internet("root@192.168.1.100"))
         self.assertFalse(is_reachable_from_internet("root@10.0.0.5"))
 
 
 # =============================================================================
-# SUITE 6: Deteksi Konflik Port Lokal
+# SUITE 6: Local Port Conflict Detection
 # =============================================================================
 class TestLocalPortConflict(unittest.TestCase):
     """
-    Menguji deteksi konflik port di mesin lokal sebelum tunnel dibuat.
-    Mirror dari logika 'ss -tlnp | grep :port' di exec_tunnel().
+    Tests local port conflict detection before creating a tunnel.
+    Mirrors the 'ss -tlnp | grep :port' logic in exec_tunnel().
     """
 
     def _is_port_in_use(self, port: int) -> bool:
         """
-        Cek apakah port di mesin lokal sedang dipakai.
-        Gunakan socket untuk simulasi akurat (tidak bergantung pada 'ss').
+        Check if a port on the local machine is currently in use.
+        Uses sockets for accurate simulation (does not rely on 'ss').
         """
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind(("127.0.0.1", port))
-                return False  # Port tersedia
+                return False  # Port is available
             except OSError:
-                return True   # Port sedang dipakai
+                return True   # Port is in use
 
     def test_high_numbered_port_likely_free(self):
-        """Port tinggi (>49151) biasanya bebas di test environment."""
-        # Port 59999 hampir pasti kosong di environment test
+        """High ports (>49151) are generally free in a test environment."""
+        # Port 59999 is almost certainly empty in a test environment
         result = self._is_port_in_use(59999)
-        # Kita tidak bisa assert pasti True/False, tapi fungsi harus berjalan
+        # We cannot assert absolutely True/False, but the function must execute
         self.assertIsInstance(result, bool)
 
     def test_occupied_port_detected(self):
-        """Buat server temp di port acak, pastikan terdeteksi sebagai dipakai."""
+        """Create a temp server on a random port, ensure it is detected as in use."""
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind(("127.0.0.1", 0))
@@ -835,12 +854,12 @@ class TestLocalPortConflict(unittest.TestCase):
         server.listen(1)
         try:
             self.assertTrue(self._is_port_in_use(occupied_port),
-                f"Port {occupied_port} seharusnya terdeteksi sebagai dipakai")
+                f"Port {occupied_port} should be detected as in use")
         finally:
             server.close()
 
     def test_port_conflict_message_format(self):
-        """Format pesan error konflik port harus informatif."""
+        """The port conflict error message must be informative."""
         container   = "myapp"
         remote_port = 3000
         local_port  = 3000
@@ -852,22 +871,22 @@ class TestLocalPortConflict(unittest.TestCase):
         self.assertIn("<free_port>",   msg)
 
     def test_alternative_port_suggestion(self):
-        """Jika port 3000 dipakai, user bisa coba port lain (misal 3001)."""
-        suggested_port = 3001  # User bisa pakai port berbeda
+        """If port 3000 is in use, the user can try another port (e.g., 3001)."""
+        suggested_port = 3001  # User can utilize a different port
         self.assertGreater(suggested_port, 0)
         self.assertLessEqual(suggested_port, 65535)
 
 
 # =============================================================================
-# SUITE 7: Robustness — Tunnel Mati & File Korup
+# SUITE 7: Robustness — Sudden Death & Corrupted Files
 # =============================================================================
 class TestTunnelRobustness(unittest.TestCase):
     """
-    Menguji ketahanan sistem tunnel terhadap kondisi abnormal:
-    - Proses tunnel mati tiba-tiba
-    - File .pid hilang
-    - File .meta rusak/tidak lengkap
-    - Duplikasi tunnel (tunnel sama dibuat ulang)
+    Tests the tunnel system's resilience against abnormal conditions:
+    - Tunnel process suddenly dies
+    - Missing .pid files
+    - Corrupted or incomplete .meta files
+    - Tunnel duplication (the same tunnel recreated)
     """
 
     def setUp(self):
@@ -879,9 +898,9 @@ class TestTunnelRobustness(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_corrupt_meta_file_handled_gracefully(self):
-        """File .meta yang korup tidak boleh menyebabkan crash."""
-        (self.tunnel_dir / "corrupt_3000.meta").write_text("ini bukan format yang benar!!!\n???")
-        # Parsing harus tetap berjalan
+        """A corrupted .meta file must not cause a crash."""
+        (self.tunnel_dir / "corrupt_3000.meta").write_text("this is not a valid format!!!\n???")
+        # Parsing should proceed gracefully
         result = {}
         try:
             for line in (self.tunnel_dir / "corrupt_3000.meta").read_text().splitlines():
@@ -889,12 +908,12 @@ class TestTunnelRobustness(unittest.TestCase):
                     k, _, v = line.partition("=")
                     result[k.strip()] = v.strip()
         except Exception as e:
-            self.fail(f"Parsing file korup melempar exception: {e}")
-        # result mungkin kosong, tapi tidak crash
+            self.fail(f"Parsing a corrupted file threw an exception: {e}")
+        # Result might be empty, but it shouldn't crash
         self.assertIsInstance(result, dict)
 
     def test_empty_meta_file_handled(self):
-        """File .meta kosong tidak boleh crash."""
+        """An empty .meta file must not crash the parser."""
         (self.tunnel_dir / "empty_3000.meta").write_text("")
         data = {}
         for line in (self.tunnel_dir / "empty_3000.meta").read_text().splitlines():
@@ -905,17 +924,17 @@ class TestTunnelRobustness(unittest.TestCase):
 
     def test_replacing_existing_tunnel_kills_old_pid(self):
         """
-        Jika tunnel yang sama dibuat ulang, proses lama harus dihentikan.
-        Simulasikan dengan PID dari proses yang sudah tidak ada.
+        If the same tunnel is recreated, the old process must be terminated.
+        Simulate this with a PID from a process that no longer exists.
         """
-        # Buat tunnel dengan PID yang sudah mati
+        # Create a tunnel with a dead PID
         key = "myapp_3000"
         (self.tunnel_dir / f"{key}.pid").write_text("2147483647\n")
         (self.tunnel_dir / f"{key}.meta").write_text(
             "container=myapp\nremote_port=3000\nlocal_port=3000\n"
             "server=root@server.id\ncontainer_ip=10.0.3.5\nstarted=2025-01-15 10:00:00\n"
         )
-        # Simulasi: tunnel baru menimpa yang lama
+        # Simulation: new tunnel overwriting the old one
         old_pid_file = self.tunnel_dir / f"{key}.pid"
         if old_pid_file.exists():
             old_pid = old_pid_file.read_text().strip()
@@ -923,81 +942,81 @@ class TestTunnelRobustness(unittest.TestCase):
                 try:
                     os.kill(int(old_pid), signal.SIGTERM)
                 except (ProcessLookupError, PermissionError):
-                    pass  # Proses sudah mati — aman dilanjutkan
+                    pass  # Process is already dead — safe to proceed
             old_pid_file.unlink()
         self.assertFalse(old_pid_file.exists())
 
     def test_pid_file_with_negative_number(self):
-        """PID negatif tidak boleh diproses sebagai PID valid."""
+        """A negative PID should not be processed as a valid PID."""
         pid_str = "-1"
         is_valid_pid = pid_str.isdigit() and int(pid_str) > 0
-        # "-1".isdigit() → False di Python karena tanda minus
+        # "-1".isdigit() -> False in Python due to the minus sign
         self.assertFalse(is_valid_pid)
 
     def test_tunnel_restart_creates_fresh_metadata(self):
-        """Setelah restart, metadata harus terupdate (bukan append)."""
+        """Upon restart, metadata must be fully updated (not appended)."""
         key = "webapp_8080"
         meta_file = self.tunnel_dir / f"{key}.meta"
-        # Tulis pertama kali
+        # Initial write
         meta_file.write_text("container=webapp\nremote_port=8080\nstarted=2025-01-01\n")
-        # Timpa (restart)
+        # Overwrite (restart)
         meta_file.write_text("container=webapp\nremote_port=8080\nstarted=2025-06-01\n")
         content = meta_file.read_text()
         self.assertEqual(content.count("container=webapp"), 1,
-            "Metadata tidak boleh duplikat setelah restart")
+            "Metadata must not duplicate entries after a restart")
         self.assertIn("2025-06-01", content)
         self.assertNotIn("2025-01-01", content)
 
 
 # =============================================================================
-# SUITE 8: Bash Module Tests (jalankan jika source tersedia)
+# SUITE 8: Bash Module Tests (run if source is available)
 # =============================================================================
-@unittest.skipUnless(has_bash_modules(), "Bash modules tidak ditemukan di CLIENT_SRC")
+@unittest.skipUnless(has_bash_modules(), "Bash modules not found in CLIENT_SRC")
 class TestTunnelBashModules(unittest.TestCase):
     """
-    Menguji exec_tunnel(), exec_tunnel_list(), exec_tunnel_stop()
-    langsung dari bash modules dengan SSH yang dimock.
+    Tests exec_tunnel(), exec_tunnel_list(), exec_tunnel_stop()
+    directly from bash modules utilizing mocked SSH.
     """
 
     def setUp(self):
-        self.env = BashEnv(fake_ssh=False)  # SSH dimock secara manual per-test
+        self.env = BashEnv(fake_ssh=False)  # SSH is manually mocked per-test
 
     def tearDown(self):
         self.env.cleanup()
 
     def test_tunnel_fails_without_active_connection(self):
-        """tunnel harus gagal (exit non-0) jika tidak ada koneksi aktif."""
+        """Tunnel must fail (non-0 exit) if there is no active connection."""
         rc, out, err = self.env.run_bash(
             "exec_tunnel myapp 3000",
             timeout=5
         )
         self.assertNotEqual(rc, 0,
-            "tunnel tanpa koneksi aktif seharusnya gagal")
+            "Tunnel without an active connection should fail")
         combined = (out + err).lower()
         self.assertTrue(
-            any(kw in combined for kw in ["no active", "not connected", "error", "aktif"]),
-            f"Pesan error tidak mengindikasikan koneksi bermasalah: {combined}"
+            any(kw in combined for kw in ["no active", "not connected", "error"]),
+            f"Error message does not indicate connection issues: {combined}"
         )
 
     def test_tunnel_empty_container_exits_with_error(self):
-        """Memanggil exec_tunnel tanpa argumen harus menampilkan usage."""
+        """Calling exec_tunnel without arguments must display usage instructions."""
         self.env.set_active_connection("myserver", "root@server.id", "admin")
         self.env.install_fake_ssh_with_ip("10.0.3.5")
         rc, out, err = self.env.run_bash("exec_tunnel '' ''", timeout=5)
         self.assertNotEqual(rc, 0)
 
     def test_tunnel_list_empty_when_no_tunnels(self):
-        """tunnel-list tanpa tunnel aktif harus menampilkan pesan 'no tunnels'."""
+        """tunnel-list without active tunnels must show a 'no tunnels' message."""
         rc, out, err = self.env.run_bash("exec_tunnel_list", timeout=5)
-        self.assertEqual(rc, 0, f"tunnel-list harus sukses walau kosong: {err}")
+        self.assertEqual(rc, 0, f"tunnel-list must succeed even when empty: {err}")
         combined = (out + err).lower()
         self.assertTrue(
-            any(kw in combined for kw in ["no tunnel", "not found", "kosong", "aktif"]),
-            f"Harus ada pesan 'no tunnels': {combined}"
+            any(kw in combined for kw in ["no tunnel", "not found", "empty", "active"]),
+            f"Expected a 'no tunnels' message: {combined}"
         )
 
     def test_tunnel_stop_nonexistent_exits_error(self):
-        """tunnel-stop container yang tidak ada harus menampilkan error."""
+        """tunnel-stop for a non-existent container must display an error."""
         rc, out, err = self.env.run_bash(
             "exec_tunnel_stop 'doesnotexist' 3000",
             timeout=5
@@ -1005,13 +1024,13 @@ class TestTunnelBashModules(unittest.TestCase):
         combined = out + err
         self.assertTrue(
             any(kw in combined.lower() for kw in ["not found", "no tunnel", "error"]),
-            f"Harus ada pesan error untuk tunnel tidak ada: {combined}"
+            f"Expected an error message for a non-existent tunnel: {combined}"
         )
 
     def test_tunnel_list_shows_meta_content(self):
         """
-        Jika ada file .meta, exec_tunnel_list harus menampilkan isinya.
-        (Simulasi tunnel aktif dengan mock PID = PID proses ini sendiri)
+        If a .meta file exists, exec_tunnel_list must output its content.
+        (Simulates an active tunnel with a mock PID = PID of this current process)
         """
         self.env.write_meta(
             container="webapp", remote_port=8080, local_port=8080,
@@ -1019,75 +1038,75 @@ class TestTunnelBashModules(unittest.TestCase):
         )
         self.env.write_pid("webapp", 8080, os.getpid())
         rc, out, err = self.env.run_bash("exec_tunnel_list", timeout=5)
-        self.assertEqual(rc, 0, f"Gagal menjalankan tunnel-list: {err}")
-        # Harus ada info tentang container atau server
+        self.assertEqual(rc, 0, f"Failed to execute tunnel-list: {err}")
+        # Info about container or server must be present
         combined = out + err
         self.assertTrue(
             "webapp" in combined or "8080" in combined,
-            f"Output tidak menampilkan info tunnel: {combined}"
+            f"Output fails to display tunnel information: {combined}"
         )
 
     def test_tunnel_stop_cleans_meta_and_pid(self):
         """
-        Setelah tunnel-stop, file .meta dan .pid harus terhapus.
+        After tunnel-stop, both .meta and .pid files must be erased.
         """
         tunnel_dir = self.env.tunnel_dir
         self.env.write_meta("cleanme", 5000, 5000, "root@server.id")
-        self.env.write_pid("cleanme", 5000, 2147483647)  # PID mati
+        self.env.write_pid("cleanme", 5000, 2147483647)  # Dead PID
         rc, out, err = self.env.run_bash(
             "exec_tunnel_stop 'cleanme' '5000'",
             timeout=5
         )
-        # File harus terhapus
+        # Files must be deleted
         self.assertFalse((tunnel_dir / "cleanme_5000.meta").exists(),
-            "File .meta harus dihapus setelah tunnel-stop")
+            ".meta file must be deleted following tunnel-stop")
         self.assertFalse((tunnel_dir / "cleanme_5000.pid").exists(),
-            "File .pid harus dihapus setelah tunnel-stop")
+            ".pid file must be deleted following tunnel-stop")
 
     def test_tunnel_invalid_port_string(self):
-        """Port non-numerik harus ditolak dengan pesan error jelas."""
+        """A non-numeric port must be rejected with a clear error message."""
         self.env.set_active_connection("myserver", "root@server.id", "admin")
         self.env.install_fake_ssh_with_ip("10.0.3.5")
         rc, out, err = self.env.run_bash(
             "exec_tunnel myapp 'notaport'",
             timeout=5
         )
-        self.assertNotEqual(rc, 0, "Port non-numerik seharusnya ditolak")
+        self.assertNotEqual(rc, 0, "A non-numeric port should be rejected")
         combined = out + err
         self.assertTrue(
             any(kw in combined.lower() for kw in ["integer", "numeric", "port", "error"]),
-            f"Pesan error tidak menyebut port: {combined}"
+            f"Error message does not mention port formatting: {combined}"
         )
 
     def test_cross_region_tunnel_builds_correct_ssh_command(self):
         """
-        Verifikasi bahwa exec_tunnel membangun perintah SSH -L yang benar
-        untuk skenario cross-region (server Indonesia dari klien Amerika).
+        Verify that exec_tunnel builds the correct SSH -L command
+        for cross-region scenarios (Indonesian server from a US client).
         """
-        # Set koneksi aktif dengan IP publik Indonesia
+        # Set active connection with an Indonesian public IP
         self.env.set_active_connection(
             "indonesia", "root@103.145.100.50", "devuser"
         )
-        # Mock SSH: kembalikan IP container saat ditanya --ip
+        # Mock SSH: return container IP when asked via --ip
         self.env.install_fake_ssh_with_ip("10.0.3.7")
 
-        # Jalankan tunnel — tidak akan membuat koneksi nyata karena SSH di-mock
-        # Kita cek bahwa proses berjalan tanpa error validasi
+        # Run tunnel — will not create a real connection due to mock
+        # We check that the process runs without validation errors
         rc, out, err = self.env.run_bash(
-            # Timeout singkat karena fake SSH spawn sleep 3600
-            # Kita hanya perlu memastikan validasi lewat
+            # Short timeout as the fake SSH spawns a sleep 3600
+            # We simply need to ensure validation passes
             """
-            # Override exec_tunnel untuk hanya cek parameter tanpa benar-benar SSH
+            # Override exec_tunnel to merely check parameters without an actual SSH
             exec_tunnel_dry_run() {
                 ensure_connected
                 local container=$1
                 local remote_port=$2
                 local local_port=${3:-$remote_port}
                 if [ -z "$container" ] || [ -z "$remote_port" ]; then
-                    echo "ERROR: args kosong" >&2; exit 1
+                    echo "ERROR: Empty arguments" >&2; exit 1
                 fi
                 if ! [[ "$remote_port" =~ ^[0-9]+$ ]] || ! [[ "$local_port" =~ ^[0-9]+$ ]]; then
-                    echo "ERROR: port harus integer" >&2; exit 1
+                    echo "ERROR: Port must be an integer" >&2; exit 1
                 fi
                 echo "DRY_RUN_OK: $container $remote_port $local_port $CONN"
             }
@@ -1095,7 +1114,7 @@ class TestTunnelBashModules(unittest.TestCase):
             """,
             timeout=5
         )
-        self.assertEqual(rc, 0, f"Dry-run tunnel gagal: {err}\n{out}")
+        self.assertEqual(rc, 0, f"Dry-run tunnel failed: {err}\n{out}")
         self.assertIn("DRY_RUN_OK", out)
         self.assertIn("mywebapp",           out)
         self.assertIn("8080",               out)
@@ -1103,20 +1122,20 @@ class TestTunnelBashModules(unittest.TestCase):
 
 
 # =============================================================================
-# SUITE 9: Integration Test Koneksi Jaringan (Opsional)
+# SUITE 9: Network Connectivity Integration Tests (Optional)
 # =============================================================================
 class TestNetworkConnectivityHelpers(unittest.TestCase):
     """
-    Test helper konektivitas jaringan — tanpa koneksi nyata ke luar.
-    Simulasikan skenario cross-region menggunakan localhost.
+    Test network connectivity helpers — without an actual outbound connection.
+    Simulates a cross-region scenario using localhost.
     """
 
     def test_localhost_tcp_roundtrip(self):
         """
-        Simulasikan SSH tunnel cross-region menggunakan dua socket localhost.
-        Client di 'Amerika' (port tinggi) ↔ 'Server' di localhost (port acak).
+        Simulate an SSH cross-region tunnel using two localhost sockets.
+        Client in the 'US' (high port) <-> 'Server' on localhost (random port).
         """
-        # Buat server socket (simulasi server Indonesia)
+        # Create server socket (simulates Indonesian server)
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind(("127.0.0.1", 0))
@@ -1141,7 +1160,7 @@ class TestNetworkConnectivityHelpers(unittest.TestCase):
         t = threading.Thread(target=server_thread, daemon=True)
         t.start()
 
-        # Client terhubung (simulasi tunnel sudah aktif)
+        # Client connects (simulating an active tunnel)
         time.sleep(0.1)
         client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_sock.settimeout(3)
@@ -1156,10 +1175,10 @@ class TestNetworkConnectivityHelpers(unittest.TestCase):
 
     def test_ssh_port_22_reachability_check_logic(self):
         """
-        Simulasikan pemeriksaan apakah port 22 server Indonesia terjangkau.
-        Dalam test ini, kita check port yang kita buka sendiri di localhost.
+        Simulate a check verifying if port 22 on the Indonesian server is reachable.
+        In this test, we check a port we open ourselves on localhost.
         """
-        # Buka server TCP di port acak (simulasi SSH server Indonesia)
+        # Open a TCP server on a random port (simulating the Indonesian SSH server)
         fake_ssh_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         fake_ssh_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         fake_ssh_server.bind(("127.0.0.1", 0))
@@ -1168,22 +1187,22 @@ class TestNetworkConnectivityHelpers(unittest.TestCase):
         fake_ssh_server.settimeout(2)
 
         def check_port_reachable(host: str, port: int, timeout: float = 2.0) -> bool:
-            """Cek apakah port dapat dihubungi (seperti yang dilakukan SSH)."""
+            """Check if a port is reachable (similar to SSH diagnostics)."""
             try:
                 with socket.create_connection((host, port), timeout=timeout):
                     return True
             except (socket.timeout, ConnectionRefusedError, OSError):
                 return False
 
-        # Port yang kita buka → harus terjangkau ✅
+        # Port we opened -> must be reachable [OK]
         self.assertTrue(check_port_reachable("127.0.0.1", fake_port))
         fake_ssh_server.close()
 
-        # Port yang tidak ada → tidak terjangkau ❌
+        # Non-existent port -> unreachable [FAIL]
         self.assertFalse(check_port_reachable("127.0.0.1", 1))
 
     def test_container_ip_format(self):
-        """IP container LXC biasanya dalam range 10.0.3.x."""
+        """LXC container IPs generally reside within the 10.0.3.x range."""
         def is_lxc_container_ip(ip: str) -> bool:
             parts = ip.split(".")
             if len(parts) != 4:
@@ -1207,24 +1226,25 @@ class MelisaTunnelTestRunner(unittest.TextTestRunner):
     def run(self, test):
         print(f"\n{BOLD}{CYAN}{'='*65}{RESET}")
         print(f"{BOLD}{CYAN}  MELISA — Tunnel Mode & Cross-Region Connectivity Tests{RESET}")
+        if DEBUG_MODE:
+            print(f"{BOLD}{YELLOW}  *** DEBUG MODE ACTIVE ***{RESET}")
         print(f"{BOLD}{CYAN}{'='*65}{RESET}")
-        print(f"  Project root : {MELISA_ROOT or col('Tidak ditemukan', RED)}")
-        print(f"  Client src   : {CLIENT_SRC or col('Tidak ditemukan', YELLOW)}")
-        print(f"  Bash modules : {col('Tersedia', GREEN) if has_bash_modules() else col('Tidak ada (Suite 8 dilewati)', YELLOW)}")
+        print(f"  Project Root : {MELISA_ROOT or col('Not found', RED)}")
+        print(f"  Client Src   : {CLIENT_SRC or col('Not found', YELLOW)}")
+        print(f"  Bash Modules : {col('Available', GREEN) if has_bash_modules() else col('Missing (Suite 8 skipped)', YELLOW)}")
         print(f"{BOLD}{CYAN}{'='*65}{RESET}\n")
-        print(f"{BOLD}📋 Analisis Cross-Region (Amerika → Indonesia):{RESET}")
-        print(f"  {'✅' if True else '❌'} SSH tunnel (-L) mendukung lintas negara secara native")
-        print(f"  ✅ 'melisa tunnel <container> <port>' meneruskan traffic ke container")
-        print(f"  ⚠️  Syarat: server Indonesia harus punya IP publik & port 22 terbuka")
-        print(f"  ❌ Server di belakang NAT/CGNAT tidak bisa diakses langsung\n")
-        result = super().run(test)
-        return result
+        print(f"{BOLD}[INFO] Cross-Region Analysis (US -> Indonesia):{RESET}")
+        print(f"  [OK] SSH tunnel (-L) supports cross-region natively.")
+        print(f"  [OK] 'melisa tunnel <container> <port>' forwards traffic to the container.")
+        print(f"  [WARN] Requirement: The Indonesian server must have a public IP and an open port 22.")
+        print(f"  [FAIL] Servers behind NAT/CGNAT cannot be accessed directly.\n")
+        return super().run(test)
 
 
 if __name__ == "__main__":
     loader = unittest.TestLoader()
 
-    # Urutan suite yang logis
+    # Logical sequence of suites
     suite = unittest.TestSuite()
     for cls in [
         TestTunnelPortValidation,

@@ -35,16 +35,35 @@ CYAN   = "\033[36m"
 BOLD   = "\033[1m"
 RESET  = "\033[0m"
 
+# ─────────────────────────────────────────────────────────
+# GLOBAL CONFIGURATION
+# ─────────────────────────────────────────────────────────
+DEBUG_MODE = False
+if "--debug" in sys.argv:
+    DEBUG_MODE = True
+    sys.argv.remove("--debug")
+
 def col(text: str, color: str) -> str:
     if sys.stdout.isatty():
         return f"{color}{text}{RESET}"
     return text
 
+def debug_print(cmd_name: str, args: list, rc: int, stdout: str, stderr: str):
+    """Prints raw, unfiltered subprocess output when DEBUG_MODE is active."""
+    if not DEBUG_MODE:
+        return
+    print(f"\n{col('--- [DEBUG: ' + cmd_name + '] ---', YELLOW)}")
+    print(f"{col('Command:', BOLD)} {args}")
+    print(f"{col('Exit Code:', BOLD)} {rc}")
+    print(f"{col('STDOUT:', BOLD)}\n{stdout}")
+    print(f"{col('STDERR:', BOLD)}\n{stderr}")
+    print(col('-----------------------', YELLOW))
+
 # ─────────────────────────────────────────────────────────
-# HELPER: Jalankan bash script di environment terisolasi
+# HELPER: Run bash script in an isolated environment
 # ─────────────────────────────────────────────────────────
 class BashEnv:
-    """Environment terisolasi untuk menguji bash scripts Melisa."""
+    """Isolated environment for testing Melisa bash scripts."""
     def __init__(self):
         self.tmp_dir = tempfile.mkdtemp(prefix="melisa_test_")
         self.home    = Path(self.tmp_dir) / "home"
@@ -78,48 +97,52 @@ class BashEnv:
             set -o pipefail
             export HOME="{self.home}"
             export MELISA_LIB="{lib_dir}"
-            # Source modules jika ada
+            # Source modules if they exist
             [ -f "$MELISA_LIB/utils.sh" ] && source "$MELISA_LIB/utils.sh" 2>/dev/null
             [ -f "$MELISA_LIB/auth.sh"  ] && source "$MELISA_LIB/auth.sh"  2>/dev/null
             [ -f "$MELISA_LIB/db.sh"    ] && source "$MELISA_LIB/db.sh"    2>/dev/null
             [ -f "$MELISA_LIB/exec.sh"  ] && source "$MELISA_LIB/exec.sh"  2>/dev/null
         """)
         full_script = header + "\n" + script
+        cmd_args = ["bash", "-c", full_script]
         try:
             result = subprocess.run(
-                ["bash", "-c", full_script],
+                cmd_args,
                 capture_output=True,
                 text=True,
                 env=env,
                 timeout=timeout
             )
+            debug_print("BashEnv", cmd_args, result.returncode, result.stdout, result.stderr)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
-            return -1, "", f"TIMEOUT setelah {timeout} detik"
+            debug_print("BashEnv", cmd_args, -1, "", f"TIMEOUT after {timeout} seconds")
+            return -1, "", f"TIMEOUT after {timeout} seconds"
         except Exception as e:
+            debug_print("BashEnv", cmd_args, -2, "", str(e))
             return -2, "", str(e)
 
 def has_bash_modules() -> bool:
-    """Periksa apakah bash modules tersedia."""
+    """Check if bash modules are available."""
     return CLIENT_SRC is not None and (CLIENT_SRC / "utils.sh").exists()
 
 # ─────────────────────────────────────────────────────────
-# HELPER: Deteksi sudo tanpa password (FIX #2)
+# HELPER: Detect passwordless sudo (FIX #2)
 # ─────────────────────────────────────────────────────────
 def can_sudo_nopasswd() -> bool:
     """
-    Periksa apakah sudo bisa dijalankan tanpa prompt password.
+    Check if sudo can be executed without a password prompt.
 
-    Menggunakan 'sudo -n true':
-      -n  = non-interactive, langsung gagal (exit 1) jika password diperlukan
-            daripada memblokir proses sambil menunggu input TTY.
+    Using 'sudo -n true':
+      -n  = non-interactive, fails immediately (exit 1) if a password is required
+            instead of blocking the process while waiting for TTY input.
 
-    Mengembalikan True jika sudo tersedia tanpa password (NOPASSWD),
-    False jika password diperlukan atau sudo tidak ada.
+    Returns True if sudo is available without a password (NOPASSWD),
+    False if a password is required or sudo is missing.
 
-    Cara mengaktifkan NOPASSWD untuk testing:
+    How to enable NOPASSWD for testing:
       sudo visudo
-      # Tambahkan baris berikut (ganti 'saferoom' dengan username Anda):
+      # Add the following line (replace 'saferoom' with your username):
       saferoom ALL=(ALL) NOPASSWD: /home/saferoom/Documents/afira/saferoom/target/debug/melisa
     """
     try:
@@ -134,7 +157,7 @@ def can_sudo_nopasswd() -> bool:
 
 
 # ─────────────────────────────────────────────────────────
-# TEST SUITE 1: Pure Logic Tests (tidak butuh binary/bash)
+# TEST SUITE 1: Pure Logic Tests (no binary/bash required)
 # ─────────────────────────────────────────────────────────
 class TestSlugGeneration(unittest.TestCase):
     def _generate_slug(self, name: str, release: str, arch: str) -> str:
@@ -224,7 +247,7 @@ class TestDistroListParsing(unittest.TestCase):
             result = self._parse(content)
             self.assertEqual(len(result), 1)
             self.assertEqual(result[0]["pkg_manager"], expected_pm,
-                f"pkg_manager salah untuk '{name}'")
+                f"Incorrect pkg_manager for '{name}'")
 
     def test_multiple_distros(self):
         content = textwrap.dedent("""\
@@ -251,12 +274,12 @@ class TestContainerNameValidation(unittest.TestCase):
     def test_valid_names(self):
         for name in ["myapp", "ubuntu-dev", "test123", "a", "x-y-z", "my_box"]:
             with self.subTest(name=name):
-                self.assertTrue(self._validate(name), f"'{name}' seharusnya valid")
+                self.assertTrue(self._validate(name), f"'{name}' should be valid")
 
     def test_reject_forward_slash(self):
         for name in ["a/b", "/etc/passwd", "container/hack", "../secret"]:
             with self.subTest(name=name):
-                self.assertFalse(self._validate(name), f"'{name}' seharusnya ditolak")
+                self.assertFalse(self._validate(name), f"'{name}' should be rejected")
 
     def test_reject_backslash(self):
         self.assertFalse(self._validate("evil\\path"))
@@ -265,15 +288,15 @@ class TestContainerNameValidation(unittest.TestCase):
         self.assertFalse(self._validate(".."))
 
     def test_dotdot_in_middle_allowed_if_no_slash(self):
-        # "my..container" tidak mengandung slash dan bukan persis ".."
+        # "my..container" does not contain a slash and is not exactly ".."
         self.assertTrue(self._validate("my..container"))
 
 
 class TestProjectInputValidation(unittest.TestCase):
-    """Menguji logika validate_project_input() — keamanan path traversal."""
+    """Tests validate_project_input() logic — path traversal security."""
 
     def _validate(self, project_name: str, username: str) -> bool:
-        """Mirror dari validate_project_input() di Rust."""
+        """Mirror of validate_project_input() in Rust."""
         if '/' in username or ".." in username:
             return False
         if '/' in project_name or ".." in project_name:
@@ -303,10 +326,10 @@ class TestProjectInputValidation(unittest.TestCase):
 
 
 class TestCommandParsing(unittest.TestCase):
-    """Menguji logika parse_command() — parsing input shell."""
+    """Tests parse_command() logic — shell input parsing."""
 
     def _parse(self, input_str: str):
-        """Mirror dari parse_command() di Rust."""
+        """Mirror of parse_command() in Rust."""
         raw = input_str.split()
         audit = "--audit" in raw
         parts = [x for x in raw if x != "--audit"]
@@ -349,10 +372,10 @@ class TestCommandParsing(unittest.TestCase):
 
 
 class TestPkgManagerCmd(unittest.TestCase):
-    """Menguji get_pkg_update_cmd() — pemetaan package manager."""
+    """Tests get_pkg_update_cmd() — package manager mapping."""
 
     def _get_cmd(self, pm: str) -> str:
-        """Mirror dari get_pkg_update_cmd() di Rust."""
+        """Mirror of get_pkg_update_cmd() in Rust."""
         return {
             "apt":    "apt-get update -y",
             "dnf":    "dnf makecache",
@@ -385,9 +408,9 @@ class TestPkgManagerCmd(unittest.TestCase):
 # ─────────────────────────────────────────────────────────
 # TEST SUITE 2: Bash Client Scripts (auth.sh, db.sh)
 # ─────────────────────────────────────────────────────────
-@unittest.skipUnless(has_bash_modules(), "Bash modules tidak ditemukan di CLIENT_SRC")
+@unittest.skipUnless(has_bash_modules(), "Bash modules not found in CLIENT_SRC")
 class TestAuthModule(unittest.TestCase):
-    """Menguji auth.sh — manajemen profil koneksi server."""
+    """Tests auth.sh — server connection profile management."""
 
     def setUp(self):
         self.env = BashEnv()
@@ -396,21 +419,21 @@ class TestAuthModule(unittest.TestCase):
         self.env.cleanup()
 
     def test_init_auth_creates_directories(self):
-        """init_auth() harus membuat direktori config yang diperlukan."""
+        """init_auth() must create the required config directories."""
         rc, out, err = self.env.run_bash("init_auth")
-        self.assertEqual(rc, 0, f"init_auth gagal: {err}")
+        self.assertEqual(rc, 0, f"init_auth failed: {err}")
         config_dir = self.env.home / ".config" / "melisa"
-        self.assertTrue(config_dir.exists(), "~/.config/melisa tidak dibuat")
+        self.assertTrue(config_dir.exists(), "~/.config/melisa was not created")
         profile_file = config_dir / "profiles.conf"
-        self.assertTrue(profile_file.exists(), "profiles.conf tidak dibuat")
+        self.assertTrue(profile_file.exists(), "profiles.conf was not created")
 
     def test_get_active_conn_returns_1_when_no_active(self):
-        """get_active_conn() harus return 1 jika tidak ada koneksi aktif."""
+        """get_active_conn() should return 1 if there is no active connection."""
         rc, out, err = self.env.run_bash("init_auth; get_active_conn; echo exit=$?")
-        self.assertIn("exit=1", out, f"Harusnya return 1 jika tidak ada active file: {out}")
+        self.assertIn("exit=1", out, f"Should return 1 if there is no active file: {out}")
 
     def test_add_profile_and_get_conn(self):
-        """Menambah profil dan mengambilnya kembali."""
+        """Adding a profile and retrieving it back."""
         script = textwrap.dedent("""\
             init_auth
             CONFIG_DIR="$HOME/.config/melisa"
@@ -424,10 +447,10 @@ class TestAuthModule(unittest.TestCase):
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
         self.assertIn("CONN=root@192.168.1.100", out,
-            f"get_active_conn harus return 'root@192.168.1.100', bukan: {out}")
+            f"get_active_conn must return 'root@192.168.1.100', not: {out}")
 
     def test_get_active_conn_strips_melisa_user(self):
-        """get_active_conn() harus membuang bagian '|melisa_user'."""
+        """get_active_conn() must strip the '|melisa_user' portion."""
         script = textwrap.dedent("""\
             init_auth
             CONFIG_DIR="$HOME/.config/melisa"
@@ -441,12 +464,12 @@ class TestAuthModule(unittest.TestCase):
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
         self.assertIn("CONN=ubuntu@10.0.0.1", out,
-            f"Harus membuang '|devuser': {out}")
+            f"Must strip '|devuser': {out}")
 
 
-@unittest.skipUnless(has_bash_modules(), "Bash modules tidak ditemukan di CLIENT_SRC")
+@unittest.skipUnless(has_bash_modules(), "Bash modules not found in CLIENT_SRC")
 class TestDBModule(unittest.TestCase):
-    """Menguji db.sh — project registry (flat file database)."""
+    """Tests db.sh — project registry (flat file database)."""
 
     def setUp(self):
         self.env = BashEnv()
@@ -457,11 +480,11 @@ class TestDBModule(unittest.TestCase):
         self.env.cleanup()
 
     def _setup_db(self) -> str:
-        """Siapkan DB_PATH di environment."""
+        """Setup DB_PATH in the environment."""
         return f'DB_PATH="{self.db_dir}/registry"'
 
     def test_db_update_project_creates_entry(self):
-        """db_update_project() harus membuat entry baru."""
+        """db_update_project() must create a new entry."""
         script = f"""\
 {self._setup_db()}
 db_update_project "myapp" "/home/user/projects/myapp"
@@ -472,7 +495,7 @@ cat "$DB_PATH"
         self.assertIn("myapp|", out)
 
     def test_db_update_project_overwrites_existing(self):
-        """db_update_project() harus menimpa entry yang sudah ada (tidak duplikat)."""
+        """db_update_project() must overwrite an existing entry (no duplicates)."""
         script = f"""\
 {self._setup_db()}
 db_update_project "backend" "/old/path"
@@ -484,12 +507,12 @@ echo "CONTENT=$content"
 """
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
-        self.assertIn("COUNT=1", out, "Harus ada tepat 1 entry setelah overwrite")
-        self.assertIn("/new/path", out, "Harus menyimpan path baru")
-        self.assertNotIn("/old/path", out, "Path lama harus dihapus")
+        self.assertIn("COUNT=1", out, "Must have exactly 1 entry after overwrite")
+        self.assertIn("/new/path", out, "Must save the new path")
+        self.assertNotIn("/old/path", out, "The old path must be removed")
 
     def test_db_update_multiple_projects(self):
-        """Beberapa project bisa disimpan bersamaan."""
+        """Multiple projects can be saved simultaneously."""
         script = f"""\
 {self._setup_db()}
 db_update_project "frontend" "/home/user/frontend"
@@ -499,10 +522,10 @@ wc -l < "$DB_PATH"
 """
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
-        self.assertIn("3", out.strip(), "Harus ada 3 entries di database")
+        self.assertIn("3", out.strip(), "There must be 3 entries in the database")
 
     def test_db_identify_by_pwd_exact_match(self):
-        """db_identify_by_pwd() harus mengembalikan nama project untuk exact match."""
+        """db_identify_by_pwd() must return the project name for an exact match."""
         project_dir = self.env.home / "projects" / "myapp"
         project_dir.mkdir(parents=True)
         script = f"""\
@@ -517,7 +540,7 @@ echo "PROJECT=$result"
         self.assertIn("PROJECT=myapp", out)
 
     def test_db_identify_by_pwd_subdir_match(self):
-        """db_identify_by_pwd() harus match ketika berada di subdirektori project."""
+        """db_identify_by_pwd() must match when inside a project subdirectory."""
         project_dir = self.env.home / "projects" / "backend"
         sub_dir = project_dir / "src" / "api"
         sub_dir.mkdir(parents=True)
@@ -533,7 +556,7 @@ echo "PROJECT=$result"
         self.assertIn("PROJECT=backend", out)
 
     def test_db_identify_by_pwd_no_match(self):
-        """db_identify_by_pwd() harus return kosong jika tidak ada match."""
+        """db_identify_by_pwd() must return empty if there is no match."""
         unrelated_dir = self.env.home / "unrelated"
         unrelated_dir.mkdir(parents=True)
         script = f"""\
@@ -545,10 +568,10 @@ echo "PROJECT='$result'"
 """
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
-        self.assertIn("PROJECT=''", out, "Harus return kosong jika tidak ada match")
+        self.assertIn("PROJECT=''", out, "Must return empty if there is no match")
 
     def test_db_identify_longest_prefix_wins(self):
-        """db_identify_by_pwd() harus memilih path yang paling spesifik (terpanjang)."""
+        """db_identify_by_pwd() must select the most specific (longest) path."""
         parent_dir = self.env.home / "work"
         child_dir  = self.env.home / "work" / "specific" / "project"
         child_dir.mkdir(parents=True)
@@ -562,10 +585,10 @@ echo "PROJECT=$result"
 """
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
-        self.assertIn("PROJECT=specific", out, "Harus memilih path terpanjang (specific)")
+        self.assertIn("PROJECT=specific", out, "Must select the longest path (specific)")
 
     def test_db_no_false_positive_prefix(self):
-        """db_identify_by_pwd() tidak boleh match '/projects/app' untuk '/projects/apple'."""
+        """db_identify_by_pwd() must not match '/projects/app' for '/projects/apple'."""
         app_dir   = self.env.home / "projects" / "app"
         apple_dir = self.env.home / "projects" / "apple"
         app_dir.mkdir(parents=True)
@@ -580,10 +603,10 @@ echo "PROJECT='$result'"
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
         self.assertIn("PROJECT=''", out,
-            "Boundary check gagal: 'app' tidak boleh match di direktori 'apple'")
+            "Boundary check failed: 'app' must not match inside 'apple' directory")
 
     def test_db_get_path_returns_correct_path(self):
-        """db_get_path() harus mengembalikan path yang benar untuk nama project."""
+        """db_get_path() must return the correct path for a project name."""
         project_path = str(self.env.home / "work" / "backend")
         script = f"""\
 {self._setup_db()}
@@ -596,7 +619,7 @@ echo "PATH=$result"
         self.assertIn(f"PATH={project_path}", out)
 
     def test_db_get_path_nonexistent_returns_empty(self):
-        """db_get_path() harus return kosong untuk project yang tidak ada."""
+        """db_get_path() must return empty for a nonexistent project."""
         script = f"""\
 {self._setup_db()}
 result=$(db_get_path "nonexistent_project")
@@ -604,12 +627,12 @@ echo "PATH='$result'"
 """
         rc, out, err = self.env.run_bash(script)
         self.assertEqual(rc, 0, f"Error: {err}")
-        self.assertIn("PATH=''", out, "Harus return kosong untuk project tidak ada")
+        self.assertIn("PATH=''", out, "Must return empty for an unknown project")
 
 
-@unittest.skipUnless(has_bash_modules(), "Bash modules tidak ditemukan di CLIENT_SRC")
+@unittest.skipUnless(has_bash_modules(), "Bash modules not found in CLIENT_SRC")
 class TestUtilsModule(unittest.TestCase):
-    """Menguji utils.sh — fungsi-fungsi helper."""
+    """Tests utils.sh — helper functions."""
 
     def setUp(self):
         self.env = BashEnv()
@@ -618,16 +641,16 @@ class TestUtilsModule(unittest.TestCase):
         self.env.cleanup()
 
     def test_log_info_outputs_to_stderr(self):
-        """Fungsi log (jika ada) harus output ke stderr, bukan stdout."""
+        """Logging functions (if any) must output to stderr, not stdout."""
         script = 'log_info "test message" 2>&1 1>/dev/null; echo "STDERR_ONLY=$?"'
         rc, out, err = self.env.run_bash(script)
         if "log_info: command not found" in err:
-            self.skipTest("log_info tidak ada di utils.sh")
+            self.skipTest("log_info is not present in utils.sh")
 
     def test_bash_scripts_are_syntactically_valid(self):
-        """Semua file .sh harus bisa di-parse oleh bash tanpa error syntax."""
+        """All .sh files must be parsable by bash without syntax errors."""
         if not CLIENT_SRC or not CLIENT_SRC.exists():
-            self.skipTest("CLIENT_SRC tidak ditemukan")
+            self.skipTest("CLIENT_SRC not found")
         for sh_file in sorted(CLIENT_SRC.glob("*.sh")):
             with self.subTest(file=sh_file.name):
                 result = subprocess.run(
@@ -636,7 +659,7 @@ class TestUtilsModule(unittest.TestCase):
                 )
                 self.assertEqual(
                     result.returncode, 0,
-                    f"Syntax error di {sh_file.name}:\n{result.stderr}"
+                    f"Syntax error in {sh_file.name}:\n{result.stderr}"
                 )
 
 
@@ -644,10 +667,10 @@ class TestUtilsModule(unittest.TestCase):
 # TEST SUITE 3: Cargo Test Integration
 # ─────────────────────────────────────────────────────────
 class TestCargoTests(unittest.TestCase):
-    """Menjalankan `cargo test` untuk mengeksekusi semua unit test Rust."""
+    """Runs `cargo test` to execute all Rust unit tests."""
 
     def _run_cargo_test(self, test_filter: str = "", timeout: int = 120):
-        """Jalankan cargo test dengan filter opsional."""
+        """Run cargo test with an optional filter."""
         cmd = ["cargo", "test", "--quiet"]
         if test_filter:
             cmd.append(test_filter)
@@ -660,36 +683,41 @@ class TestCargoTests(unittest.TestCase):
                 text=True,
                 timeout=timeout
             )
+            debug_print("CargoTest", cmd, result.returncode, result.stdout, result.stderr)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
-            return -1, "", f"cargo test timeout setelah {timeout}s"
+            debug_print("CargoTest", cmd, -1, "", f"cargo test timeout after {timeout}s")
+            return -1, "", f"cargo test timeout after {timeout}s"
         except Exception as e:
+            debug_print("CargoTest", cmd, -2, "", str(e))
             return -2, "", str(e)
 
     @unittest.skipUnless(
         MELISA_ROOT is not None and shutil.which("cargo") is not None,
-        "cargo tidak tersedia atau MELISA_ROOT tidak ditemukan"
+        "cargo is not available or MELISA_ROOT is not found"
     )
     def test_cargo_check_compiles(self):
-        """Proyek harus bisa di-compile tanpa error (cargo check)."""
+        """The project must compile without errors (cargo check)."""
+        cmd_args = ["cargo", "check", "--quiet"]
         result = subprocess.run(
-            ["cargo", "check", "--quiet"],
+            cmd_args,
             cwd=str(MELISA_ROOT),
             capture_output=True,
             text=True,
             timeout=120
         )
+        debug_print("CargoCheck", cmd_args, result.returncode, result.stdout, result.stderr)
         self.assertEqual(
             result.returncode, 0,
-            f"cargo check gagal:\n{result.stderr}"
+            f"cargo check failed:\n{result.stderr}"
         )
 
     @unittest.skipUnless(
         MELISA_ROOT is not None and shutil.which("cargo") is not None,
-        "cargo tidak tersedia"
+        "cargo is not available"
     )
     def test_cargo_test_unit_tests_pass(self):
-        """Semua unit test Rust harus lulus."""
+        """All Rust unit tests must pass."""
         rc, out, err = self._run_cargo_test()
         if rc != 0:
             failed_tests = [
@@ -697,35 +725,35 @@ class TestCargoTests(unittest.TestCase):
                 if "FAILED" in line or "error" in line.lower()
             ]
             self.fail(
-                f"cargo test gagal (exit code {rc}).\n"
-                f"Tes yang gagal:\n" + "\n".join(failed_tests[:20]) +
+                f"cargo test failed (exit code {rc}).\n"
+                f"Failed tests:\n" + "\n".join(failed_tests[:20]) +
                 f"\n\nFull stderr:\n{err[:2000]}"
             )
 
     @unittest.skipUnless(
         MELISA_ROOT is not None and shutil.which("cargo") is not None,
-        "cargo tidak tersedia"
+        "cargo is not available"
     )
     def test_cargo_test_distro_module(self):
-        """Unit test khusus untuk modul distro."""
+        """Specific unit test for the distro module."""
         rc, out, err = self._run_cargo_test("distro")
-        self.assertEqual(rc, 0, f"Distro tests gagal:\n{err[:2000]}")
+        self.assertEqual(rc, 0, f"Distro tests failed:\n{err[:2000]}")
 
     @unittest.skipUnless(
         MELISA_ROOT is not None and shutil.which("cargo") is not None,
-        "cargo tidak tersedia"
+        "cargo is not available"
     )
     def test_cargo_test_metadata_module(self):
-        """Unit test khusus untuk modul metadata."""
+        """Specific unit test for the metadata module."""
         rc, out, err = self._run_cargo_test("metadata")
-        self.assertEqual(rc, 0, f"Metadata tests gagal:\n{err[:2000]}")
+        self.assertEqual(rc, 0, f"Metadata tests failed:\n{err[:2000]}")
 
 
 # ─────────────────────────────────────────────────────────
 # TEST SUITE 4: Rust Binary Integration Tests
 # ─────────────────────────────────────────────────────────
 def get_melisa_binary() -> Optional[Path]:
-    """Cari binary melisa yang sudah dikompilasi."""
+    """Find the compiled melisa binary."""
     if DEBUG_BIN and DEBUG_BIN.exists():
         return DEBUG_BIN
     if BINARY and BINARY.exists():
@@ -735,69 +763,69 @@ def get_melisa_binary() -> Optional[Path]:
 
 class TestMelisaBinary(unittest.TestCase):
     """
-    Integration test: menguji binary melisa yang sudah dikompilasi.
+    Integration test: testing the compiled melisa binary.
 
-    Binary melisa memerlukan hak root untuk sebagian besar operasinya.
+    The melisa binary requires root privileges for most of its operations.
 
-    MASALAH ASAL (diperbaiki):
-      Versi lama menggunakan `sudo` tanpa flag `-n`, menyebabkan proses
-      MEMBLOKIR selama 10 detik sambil menunggu input password di TTY
-      → test_help, test_create, test_invite selalu TIMEOUT dan FAIL.
+    ORIGINAL ISSUE (Fixed):
+      Older versions used `sudo` without the `-n` flag, causing the process
+      to BLOCK for 10 seconds while waiting for password input in the TTY
+      → test_help, test_create, test_invite always result in TIMEOUT and FAIL.
 
-    PERBAIKAN YANG DITERAPKAN:
-      1. Gunakan `sudo -n` (non-interactive) agar langsung gagal jika
-         password diperlukan, bukan memblokir.
-      2. setUpClass() mendeteksi ketersediaan sudo sekali di awal.
-      3. _require_sudo() di tiap test memberikan pesan SKIP yang jelas
-         beserta instruksi cara konfigurasi, bukan FAIL palsu.
-      4. Timeout diturunkan ke 8 detik untuk memberi buffer yang wajar.
+    APPLIED FIX:
+      1. Use `sudo -n` (non-interactive) to immediately fail if a password
+         is required, instead of blocking.
+      2. setUpClass() detects sudo availability once at the beginning.
+      3. _require_sudo() in each test provides a clear SKIP message along
+         with configuration instructions, instead of a false FAIL.
+      4. Timeout is lowered to 8 seconds to provide a reasonable buffer.
 
-    SETUP NOPASSWD (untuk menjalankan semua test):
+    NOPASSWD SETUP (to run all tests):
       sudo visudo
-      # Tambahkan baris ini (ganti path sesuai sistem Anda):
+      # Add this line (replace path according to your system):
       saferoom ALL=(ALL) NOPASSWD: /path/to/target/debug/melisa
     """
 
     @classmethod
     def setUpClass(cls):
-        """Deteksi sekali di awal apakah sudo tanpa password tersedia."""
+        """Detect once at the beginning if passwordless sudo is available."""
         cls.binary     = get_melisa_binary()
         cls._sudo_ok   = can_sudo_nopasswd()
         cls._sudo_hint = (
-            "sudo tanpa password tidak tersedia.\n"
-            "  Tambahkan ke sudoers via: sudo visudo\n"
-            "  Contoh baris: saferoom ALL=(ALL) NOPASSWD: "
+            "Passwordless sudo is not available.\n"
+            "  Add to sudoers via: sudo visudo\n"
+            "  Example line: saferoom ALL=(ALL) NOPASSWD: "
             f"{cls.binary or '/path/to/target/debug/melisa'}"
         )
 
     def _require_sudo(self):
         """
-        Lewati test ini jika sudo tanpa password tidak tersedia.
-        Dipanggil di awal setiap test yang butuh root.
+        Skip this test if passwordless sudo is not available.
+        Called at the beginning of every test that requires root.
         """
         if not self._sudo_ok:
             self.skipTest(self._sudo_hint)
 
     def _run_melisa(self, args: list, timeout: int = 8) -> Tuple[int, str, str]:
         """
-        Jalankan binary melisa dengan argumen tertentu via sudo.
+        Run the melisa binary with specific arguments via sudo.
 
-        Menggunakan `sudo -n` (non-interactive) agar:
-          - Langsung gagal dengan exit code 1 jika password diperlukan.
-          - Tidak memblokir proses test hingga timeout.
+        Using `sudo -n` (non-interactive) so that:
+          - It immediately fails with exit code 1 if a password is required.
+          - It does not block the test process until a timeout occurs.
 
         Args:
-            args:    Daftar argumen untuk diteruskan ke binary melisa.
-            timeout: Batas waktu eksekusi dalam detik (default 8s).
+            args:    List of arguments to pass to the melisa binary.
+            timeout: Execution time limit in seconds (default 8s).
 
         Returns:
             Tuple (returncode, stdout, stderr).
-            returncode = -1 jika timeout, -2 jika error lain.
+            returncode = -1 on timeout, -2 on other errors.
         """
         if not self.binary:
-            return -1, "", "Binary tidak ditemukan — jalankan: cargo build"
+            return -1, "", "Binary not found — run: cargo build"
 
-        # FIX #1: Gunakan sudo -n agar tidak memblokir TTY
+        # FIX #1: Use sudo -n to avoid blocking the TTY
         cmd = ["sudo", "-n", str(self.binary)] + args
         try:
             result = subprocess.run(
@@ -806,90 +834,93 @@ class TestMelisaBinary(unittest.TestCase):
                 text=True,
                 timeout=timeout
             )
+            debug_print("MelisaBinary", cmd, result.returncode, result.stdout, result.stderr)
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
-            return -1, "", f"Timeout setelah {timeout}s"
+            debug_print("MelisaBinary", cmd, -1, "", f"Timeout after {timeout}s")
+            return -1, "", f"Timeout after {timeout}s"
         except Exception as e:
+            debug_print("MelisaBinary", cmd, -2, "", str(e))
             return -2, "", str(e)
 
-    # ── Test yang TIDAK butuh sudo (lulus sejak awal) ──────────────────
-    @unittest.skipUnless(get_melisa_binary() is not None, "Binary melisa tidak ditemukan")
+    # ── Tests that DO NOT require sudo (pass natively) ──────────────────
+    @unittest.skipUnless(get_melisa_binary() is not None, "Melisa binary not found")
     def test_version_command(self):
         """
-        melisa --version harus menampilkan versi.
+        melisa --version must display the version.
 
-        Catatan: --version diproses sebelum check_root() di main.rs,
-        sehingga tidak memerlukan sudo dan selalu lulus.
+        Note: --version is processed before check_root() in main.rs,
+        so it does not require sudo and will always pass.
         """
         rc, out, err = self._run_melisa(["melisa", "--version"])
         combined = out + err
-        self.assertIn("0.1", combined, "Harus ada nomor versi di output")
+        self.assertIn("0.1", combined, "Version number must be present in the output")
 
-    # ── Test yang butuh sudo (skip jika NOPASSWD belum dikonfigurasi) ──
-    @unittest.skipUnless(get_melisa_binary() is not None, "Binary melisa tidak ditemukan")
+    # ── Tests that require sudo (skip if NOPASSWD is unconfigured) ──
+    @unittest.skipUnless(get_melisa_binary() is not None, "Melisa binary not found")
     def test_help_command_shows_usage(self):
-        """melisa --help harus menampilkan usage info."""
-        self._require_sudo()   # FIX #3: SKIP jika tidak ada NOPASSWD
+        """melisa --help must display usage info."""
+        self._require_sudo()   # FIX #3: SKIP if no NOPASSWD
         rc, out, err = self._run_melisa(["melisa", "--help"])
         combined = out + err
-        self.assertIn("MELISA", combined, "Output harus menyebut MELISA")
+        self.assertIn("MELISA", combined, "Output must mention MELISA")
         self.assertIn("--help", combined)
         self.assertIn("--list", combined)
 
-    @unittest.skipUnless(get_melisa_binary() is not None, "Binary melisa tidak ditemukan")
+    @unittest.skipUnless(get_melisa_binary() is not None, "Melisa binary not found")
     def test_unknown_command_shows_error(self):
-        """Command yang tidak dikenal harus menampilkan pesan error."""
+        """An unknown command must display an error message."""
         self._require_sudo()
         rc, out, err = self._run_melisa(["melisa", "--fakecommand"])
         combined = out + err
         self.assertIn("ERROR", combined.upper())
 
-    @unittest.skipUnless(get_melisa_binary() is not None, "Binary melisa tidak ditemukan")
+    @unittest.skipUnless(get_melisa_binary() is not None, "Melisa binary not found")
     def test_create_requires_name_and_code(self):
-        """melisa --create tanpa argumen harus menampilkan error, bukan crash."""
-        self._require_sudo()   # FIX #3: SKIP jika tidak ada NOPASSWD
+        """melisa --create without arguments must display an error, not crash."""
+        self._require_sudo()   # FIX #3: SKIP if no NOPASSWD
         rc, out, err = self._run_melisa(["melisa", "--create"])
         combined = out + err
-        # Harus ada pesan error yang informatif
+        # Must contain an informative error message
         self.assertIn("ERROR", combined.upper(),
-            f"Binary harus menampilkan ERROR untuk --create tanpa argumen.\n"
+            f"Binary must output ERROR for --create without arguments.\n"
             f"Output: {combined!r}")
 
-    @unittest.skipUnless(get_melisa_binary() is not None, "Binary melisa tidak ditemukan")
+    @unittest.skipUnless(get_melisa_binary() is not None, "Melisa binary not found")
     def test_invite_requires_enough_args(self):
-        """melisa --invite tanpa args yang cukup harus menampilkan error."""
-        self._require_sudo()   # FIX #3: SKIP jika tidak ada NOPASSWD
+        """melisa --invite without enough args must display an error."""
+        self._require_sudo()   # FIX #3: SKIP if no NOPASSWD
         rc, out, err = self._run_melisa(["melisa", "--invite"])
         combined = out + err
         self.assertIn("ERROR", combined.upper(),
-            f"Binary harus menampilkan ERROR untuk --invite tanpa argumen.\n"
+            f"Binary must output ERROR for --invite without arguments.\n"
             f"Output: {combined!r}")
 
-    @unittest.skipUnless(get_melisa_binary() is not None, "Binary melisa tidak ditemukan")
+    @unittest.skipUnless(get_melisa_binary() is not None, "Melisa binary not found")
     def test_list_command_requires_root(self):
         """
-        melisa --list tanpa root harus menampilkan error atau meminta sudo,
-        bukan crash dengan traceback.
+        melisa --list without root should display an error or request sudo,
+        rather than crashing with a traceback.
 
-        Test ini memverifikasi bahwa binary gagal dengan anggun (graceful),
-        bukan dengan panic atau segfault (exit code 139 / SIGSEGV).
+        This test verifies that the binary fails gracefully,
+        not with a panic or segfault (exit code 139 / SIGSEGV).
         """
         self._require_sudo()
         rc, out, err = self._run_melisa(["melisa", "--list"])
-        # Tidak boleh crash (SIGSEGV = 139, panic biasanya = 101)
-        self.assertNotEqual(rc, 139, "Binary crash dengan SIGSEGV (segfault)")
+        # Must not crash (SIGSEGV = 139, panic is usually = 101)
+        self.assertNotEqual(rc, 139, "Binary crashed with SIGSEGV (segfault)")
         self.assertNotIn("thread 'main' panicked", out + err,
-            "Binary melakukan panic! — ini adalah bug Rust yang perlu diperbaiki")
+            "Binary executed panic! — this is a Rust bug that needs fixing")
 
 
 # ─────────────────────────────────────────────────────────
-# TEST SUITE 5: Security Tests (Keamanan Keseluruhan)
+# TEST SUITE 5: Security Tests (Overall Security)
 # ─────────────────────────────────────────────────────────
 class TestSecurityCritical(unittest.TestCase):
-    """Test keamanan kritis — path traversal, injection, dll."""
+    """Critical security tests — path traversal, injection, etc."""
 
     def test_no_path_traversal_in_container_name(self):
-        """Nama container tidak boleh mengandung path traversal."""
+        """Container name must not contain path traversal characters."""
         evil_names = [
             "../etc",
             "../../root/.ssh/authorized_keys",
@@ -902,22 +933,22 @@ class TestSecurityCritical(unittest.TestCase):
                 is_safe = '/' not in name and '\\' not in name and name != ".."
                 self.assertFalse(
                     is_safe,
-                    f"Nama '{name}' berbahaya harus ditolak oleh validasi"
+                    f"Malicious name '{name}' must be rejected by validation"
                 )
 
     def test_no_path_traversal_in_username(self):
-        """Username tidak boleh mengandung path traversal."""
+        """Username must not contain path traversal characters."""
         evil_usernames = ["../root", "alice/../root", "user/hack", ".."]
         for username in evil_usernames:
             with self.subTest(username=username):
                 is_safe = '/' not in username and ".." not in username
                 self.assertFalse(
                     is_safe,
-                    f"Username '{username}' berbahaya harus ditolak"
+                    f"Malicious username '{username}' must be rejected"
                 )
 
     def test_metadata_content_format(self):
-        """Format metadata harus menggunakan KEY=VALUE tanpa karakter berbahaya."""
+        """Metadata format must use KEY=VALUE without malicious characters."""
         import re
         valid_keys = [
             "MELISA_INSTANCE_NAME", "MELISA_INSTANCE_ID", "DISTRO_SLUG",
@@ -928,11 +959,11 @@ class TestSecurityCritical(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertTrue(
                     key_pattern.match(key),
-                    f"Key '{key}' mengandung karakter tidak aman"
+                    f"Key '{key}' contains unsafe characters"
                 )
 
     def test_project_path_construction_safety(self):
-        """Path /home/<user>/<project> harus aman dari injection."""
+        """Path /home/<user>/<project> must be safe from injection."""
         safe_combos = [
             ("alice",   "backend"),
             ("bob",     "frontend-app"),
@@ -941,23 +972,23 @@ class TestSecurityCritical(unittest.TestCase):
         evil_combos = [
             ("../root",    "project"),     # username traversal
             ("alice",      "../../../etc"), # project traversal
-            ("user/hack",  "project"),     # username dengan slash
+            ("user/hack",  "project"),     # username with slash
         ]
         for username, project in safe_combos:
             with self.subTest(username=username, project=project):
                 is_safe = '/' not in username and ".." not in username \
                           and '/' not in project and ".." not in project
-                self.assertTrue(is_safe, f"Kombinasi ({username}, {project}) seharusnya aman")
+                self.assertTrue(is_safe, f"Combination ({username}, {project}) should be safe")
 
         for username, project in evil_combos:
             with self.subTest(username=username, project=project):
                 is_safe = '/' not in username and ".." not in username \
                           and '/' not in project and ".." not in project
-                self.assertFalse(is_safe, f"Kombinasi ({username}, {project}) seharusnya ditolak")
+                self.assertFalse(is_safe, f"Combination ({username}, {project}) should be rejected")
 
 
 # ─────────────────────────────────────────────────────────
-# Custom test result dengan timing dan warna
+# Custom test result with timing and colors
 # ─────────────────────────────────────────────────────────
 class ColoredTestResult(unittest.TextTestResult):
     def startTest(self, test):
@@ -1000,27 +1031,29 @@ class ColoredTestRunner(unittest.TextTestRunner):
 # Entry point
 # ─────────────────────────────────────────────────────────
 def print_banner():
-    """Tampilkan banner informasi sebelum test."""
+    """Display information banner before testing."""
     print(col("=" * 65, CYAN))
     print(col("  MELISA — Unit Test Runner", BOLD + CYAN))
+    if DEBUG_MODE:
+        print(col("  *** DEBUG MODE ACTIVE ***", BOLD + YELLOW))
     print(col("=" * 65, CYAN))
-    print(f"  Root Proyek : {col(str(MELISA_ROOT or 'TIDAK DITEMUKAN'), YELLOW)}")
-    print(f"  Bash Client : {col(str(CLIENT_SRC or 'TIDAK DITEMUKAN'), YELLOW)}")
+    print(f"  Project Root : {col(str(MELISA_ROOT or 'NOT FOUND'), YELLOW)}")
+    print(f"  Bash Client  : {col(str(CLIENT_SRC or 'NOT FOUND'), YELLOW)}")
     binary = get_melisa_binary()
-    print(f"  Binary      : {col(str(binary or 'Belum dikompilasi'), YELLOW)}")
-    cargo_available = col("✓ tersedia", GREEN) if shutil.which("cargo") else col("✗ tidak ada", RED)
-    bash_available  = col("✓ tersedia", GREEN) if has_bash_modules() else col("✗ tidak ada", YELLOW)
+    print(f"  Binary       : {col(str(binary or 'Not compiled yet'), YELLOW)}")
+    cargo_available = col("[OK] available", GREEN) if shutil.which("cargo") else col("[FAIL] missing", RED)
+    bash_available  = col("[OK] available", GREEN) if has_bash_modules() else col("[WARN] missing", YELLOW)
     sudo_ok         = can_sudo_nopasswd()
-    sudo_status     = col("✓ NOPASSWD aktif", GREEN) if sudo_ok else col("✗ perlu konfigurasi (beberapa test akan SKIP)", YELLOW)
-    print(f"  cargo       : {cargo_available}")
-    print(f"  Bash modules: {bash_available}")
-    print(f"  sudo -n     : {sudo_status}")
+    sudo_status     = col("[OK] NOPASSWD active", GREEN) if sudo_ok else col("[WARN] needs configuration (some tests will SKIP)", YELLOW)
+    print(f"  cargo        : {cargo_available}")
+    print(f"  Bash modules : {bash_available}")
+    print(f"  sudo -n      : {sudo_status}")
     print(col("=" * 65, CYAN))
     print()
 
 
 def main():
-    """Entry point untuk menjalankan semua test."""
+    """Entry point to execute all tests."""
     print_banner()
 
     loader = unittest.TestLoader()
@@ -1039,6 +1072,7 @@ def main():
         ("Security",         loader.loadTestsFromTestCase(TestSecurityCritical)),
     ]
 
+    # Use args to support normal unittest flags, while ignoring --debug which we already popped
     if len(sys.argv) > 1:
         unittest.main(argv=[sys.argv[0]] + sys.argv[1:], verbosity=2,
                       testRunner=ColoredTestRunner)
@@ -1057,17 +1091,17 @@ def main():
     passed  = total - len(result.failures) - len(result.errors) - len(result.skipped)
     failed  = len(result.failures) + len(result.errors)
     skipped = len(result.skipped)
-    print(f"  Total   : {col(str(total), BOLD)}")
+    print(f"  Total    : {col(str(total), BOLD)}")
     print(f"  {col('Passed', GREEN)}   : {col(str(passed), GREEN)}")
     print(f"  {col('Failed', RED)}   : {col(str(failed), RED) if failed else col('0', GREEN)}")
     print(f"  {col('Skipped', YELLOW)}  : {col(str(skipped), YELLOW)}")
     print(col("=" * 65, CYAN))
 
     if result.failures or result.errors:
-        print(col("\n  ❌  ADA TES YANG GAGAL — Cek detail di atas\n", RED + BOLD))
+        print(col("\n  [ERROR] SOME TESTS FAILED — Check details above\n", RED + BOLD))
         sys.exit(1)
     else:
-        print(col("\n  ✅  SEMUA TES LULUS!\n", GREEN + BOLD))
+        print(col("\n  [SUCCESS] ALL TESTS PASSED!\n", GREEN + BOLD))
         sys.exit(0)
 
 
