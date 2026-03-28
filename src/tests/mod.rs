@@ -321,7 +321,6 @@ mod metadata_tests {
     async fn test_inject_and_inspect_metadata_roundtrip() {
         use crate::core::metadata::{inject_distro_metadata, inspect_container_metadata};
         use crate::core::container::DistroMetadata;
-        use std::path::PathBuf;
 
         // Create a temporary directory mimicking the LXC structure
         let tmp = std::env::temp_dir();

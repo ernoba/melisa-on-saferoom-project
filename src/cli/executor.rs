@@ -54,72 +54,93 @@ pub fn parse_command(input: &str) -> (Vec<String>, bool) {
 }
 
 pub async fn execute_command(input: &str, user: &str, home: &str) -> ExecResult {
-    // ── PARSE AUDIT FLAG (GLOBAL) ─────────────────────────────────────────────
-    // Deteksi --audit dari mana pun posisinya, lalu bersihkan dari token
-    // sebelum routing agar tidak mengganggu pencocokan argumen posisi.
     let (parts, audit) = parse_command(input);
-
     if parts.is_empty() {
         return ExecResult::Continue;
     }
-
-    match parts[0].as_str() { 
+    match parts[0].as_str() {
         "melisa" => {
             let sub_cmd = parts.get(1).map(|s| s.as_str()).unwrap_or("");
-
             match sub_cmd {
                 "--help" | "-h" => {
                     let is_admin = admin_check().await;
-
-                    println!("\n{}MELISA CONTROL INTERFACE - VERSION 0.1.2{}", BOLD, RESET);
+                    println!("\n{}MELISA CONTROL INTERFACE - VERSION 0.1.3{}", BOLD, RESET);
                     println!("Usage: melisa [options] [--audit]\n");
-                    println!("{}[--audit]{} can be appended to any command to reveal all hidden logs", YELLOW, RESET);
-                    println!("and stream raw subprocess output directly to the terminal.\n");
-
+                    println!("{}[--audit]{} dapat ditambahkan ke perintah apapun untuk menampilkan log tersembunyi.", YELLOW, RESET);
+                    println!("dan menampilkan output subprocess langsung ke terminal.\n");
                     println!("{}GENERAL COMMANDS{}", BOLD, RESET);
-                    println!("  --help, -h             Display this comprehensive help manual");
-                    println!("  --version              Display system version and project metadata");
-                    println!("  --ip <n>               Get the internal IP address of a running container");
-                    println!("  --projects             List all projects associated with your workspace");
-                    println!("  --update <project>     Synchronize project workdir via force-reset (overwrites local)");
-                    println!("  --list                 Enumerate all LXC containers provisioned to your UID");
-                    println!("  --active               Filter and display only running LXC containers");
-                    println!("  --run <n>              Initiate the startup sequence for a specific container");
-                    println!("  --stop <n>             Gracefully terminate a running container session");
-                    println!("  --use <n>              Execute an interactive TTY session (shell attach)");
-                    println!("  --send <n> <cmd>       Dispatch a non-interactive command directly to a container");
-                    println!("  --info <n>             Retrieve and display container metadata");
-                    println!("  --upload <n> <dest>    Upload local artifacts to a container destination path");
-
+                    println!("  --help, -h             Tampilkan panduan bantuan");
+                    println!("  --version              Tampilkan versi sistem");
+                    println!("  --ip <n>               Dapatkan IP internal kontainer");
+                    println!("  --projects             Daftar semua proyek workspace");
+                    println!("  --update <project>     Sinkronkan workdir proyek via force-reset");
+                    println!("  --list                 Tampilkan semua kontainer LXC");
+                    println!("  --active               Tampilkan hanya kontainer yang berjalan");
+                    println!("  --run <n>              Hidupkan kontainer");
+                    println!("  --stop <n>             Matikan kontainer");
+                    println!("  --use <n>              Masuk ke shell interaktif kontainer");
+                    println!("  --send <n> <cmd>       Kirim perintah ke kontainer");
+                    println!("  --info <n>             Tampilkan metadata kontainer");
+                    println!("  --upload <n> <dest>    Upload file ke kontainer");
+                    println!("\n{}DEPLOYMENT ENGINE (.mel){}", BOLD, RESET);
+                    println!("  --up <file.mel>        Deploy proyek dari manifest .mel");
+                    println!("  --down <file.mel>      Hentikan deployment dari manifest .mel");
+                    println!("  --mel-info <file.mel>  Tampilkan info manifest .mel");
                     if is_admin {
                         println!("\n{}ADMINISTRATION & INFRASTRUCTURE{}", BOLD, RESET);
-                        println!("  --setup                Execute host-level environment initialization");
-                        println!("  --clear                Purge the internal command history buffer");
-                        println!("  --clean                Prune orphaned sudoers configurations");
-                        println!("  --search <keyword>     Query remote repositories for validated LXC distributions");
-                        println!("  --create <n> <code>    Provision a new container from a specific distribution code");
-                        println!("  --delete <n>           Decommission and destroy a container (requires confirmation)");
-                        println!("  --share <n> <h> <c>    Mount a host directory into a container namespace");
-                        println!("  --reshare <n> <h> <c>  Unmount a host directory from a container namespace");
-
+                        println!("  --setup                Inisialisasi environment host");
+                        println!("  --clear                Hapus riwayat perintah");
+                        println!("  --clean                Bersihkan konfigurasi sudoers yatim");
+                        println!("  --search <keyword>     Cari distribusi LXC tersedia");
+                        println!("  --create <n> <code>    Buat kontainer baru dari kode distribusi");
+                        println!("  --delete <n>           Hapus kontainer (butuh konfirmasi)");
+                        println!("  --share <n> <h> <c>    Mount direktori host ke kontainer");
+                        println!("  --reshare <n> <h> <c>  Lepas mount direktori dari kontainer");
                         println!("\n{}IDENTITY & ACCESS MANAGEMENT{}", BOLD, RESET);
-                        println!("  --user                 Enumerate all registered Melisa system identities");
-                        println!("  --add <user>           Provision a new user with Melisa-restricted shell");
-                        println!("  --remove <user>        De-provision a user and revoke system permissions");
-                        println!("  --upgrade <user>       Elevate a user to administrative privileges");
-                        println!("  --passwd <user>        Update the authentication credentials for a user");
-
+                        println!("  --user                 Daftar semua identitas Melisa");
+                        println!("  --add <user>           Tambah user baru");
+                        println!("  --remove <user>        Hapus user");
+                        println!("  --upgrade <user>       Elevasi user ke admin");
+                        println!("  --passwd <user>        Ubah kredensial user");
                         println!("\n{}PROJECT ORCHESTRATION{}", BOLD, RESET);
-                        println!("  --new_project <n>      Initialize a new master git repository in root storage");
-                        println!("  --delete_project <n>   Decommission a project and purge all associated user workdirs");
-                        println!("  --invite <p> <u..>     Grant project access to specified system users");
-                        println!("  --out <p> <u..>        Revoke project access from specified system users");
-                        println!("  --pull <user> <proj>   Merge and synchronize code from a user workdir to master");
-                        println!("  --update-all <proj>    Force-propagate master updates to all project members");
+                        println!("  --new_project <n>      Inisialisasi repositori proyek baru");
+                        println!("  --delete_project <n>   Hapus proyek beserta semua workdir");
+                        println!("  --invite <p> <u..>     Berikan akses proyek ke user");
+                        println!("  --out <p> <u..>        Cabut akses proyek dari user");
+                        println!("  --pull <user> <proj>   Merge kode dari workdir user ke master");
+                        println!("  --update-all <proj>    Sebarkan update master ke semua member");
                     }
-                    println!("\n{}Note: System-level modifications require appropriate SUID elevation.{}", BOLD, RESET);
+                    println!("\n{}Catatan: Modifikasi sistem membutuhkan elevasi SUID.{}", BOLD, RESET);
                 }
 
+                // ─── DEPLOYMENT ENGINE ───────────────────────────────────────
+                "--up" => {
+                    let mel_path = parts.get(2).map(|s| s.as_str()).unwrap_or("");
+                    if mel_path.is_empty() {
+                        println!("{}[ERROR]{} Path file .mel diperlukan.", RED, RESET);
+                        println!("Usage: melisa --up <path/ke/program.mel>");
+                        return ExecResult::Continue;
+                    }
+                    crate::deployment::deployer::cmd_up(mel_path, audit).await;
+                }
+                "--down" => {
+                    let mel_path = parts.get(2).map(|s| s.as_str()).unwrap_or("");
+                    if mel_path.is_empty() {
+                        println!("{}[ERROR]{} Path file .mel diperlukan.", RED, RESET);
+                        println!("Usage: melisa --down <path/ke/program.mel>");
+                        return ExecResult::Continue;
+                    }
+                    crate::deployment::deployer::cmd_down(mel_path, audit).await;
+                }
+                "--mel-info" => {
+                    let mel_path = parts.get(2).map(|s| s.as_str()).unwrap_or("");
+                    if mel_path.is_empty() {
+                        println!("{}[ERROR]{} Path file .mel diperlukan.", RED, RESET);
+                        println!("Usage: melisa --mel-info <path/ke/program.mel>");
+                        return ExecResult::Continue;
+                    }
+                    crate::deployment::deployer::cmd_mel_info(mel_path).await;
+                }
                 "--setup" => {
                     install().await;
                 }

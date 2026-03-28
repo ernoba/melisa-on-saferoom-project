@@ -15,6 +15,7 @@ use cli::wellcome::display_melisa_banner;
 use cli::prompt::Prompt;
 use cli::executor::execute_command;
 use core::root_check::check_root;
+pub mod deployment; 
 
 // get metadata Cargo.toml
 const VERSION: &str = env!("CARGO_PKG_VERSION");
