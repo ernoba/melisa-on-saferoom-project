@@ -52,6 +52,7 @@ pub struct DependencySection {
     #[serde(default)] pub apt:      Vec<String>,
     #[serde(default)] pub pacman:   Vec<String>,
     #[serde(default)] pub dnf:      Vec<String>,
+    #[serde(default)] pub zypper:   Vec<String>,
     #[serde(default)] pub apk:      Vec<String>,
     #[serde(default)] pub pip:      Vec<String>,
     #[serde(default)] pub npm:      Vec<String>,

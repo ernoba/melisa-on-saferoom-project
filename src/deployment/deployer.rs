@@ -115,11 +115,20 @@ pub async fn cmd_up(mel_path: &str, audit: bool) {
 
     // ── 7. Mount volumes ──────────────────────────────────────────────────
     println!("\n{}[STEP 5/7]{} Mengatur volumes...{}", BOLD, RESET, RESET);
+    let mut volumes_added = false;
     for mount in &manifest.volumes.mounts {
         let parts: Vec<&str> = mount.split(':').collect();
         if parts.len() == 2 {
             add_shared_folder(&container_name, parts[0], parts[1]).await;
+            volumes_added = true;
         }
+    }
+    // TAMBAHKAN INI — restart diperlukan agar lxc.mount.entry aktif
+    if volumes_added {
+        println!("{}[INFO]{} Merestart kontainer untuk mengaktifkan volume mounts...", YELLOW, RESET);
+        stop_container(&container_name, audit).await;
+        start_container(&container_name, audit).await;
+        wait_for_ready(&container_name).await;
     }
     if manifest.volumes.mounts.is_empty() {
         println!("{}[INFO]{} Tidak ada volume yang dikonfigurasi.", YELLOW, RESET);
@@ -306,7 +315,7 @@ async fn inject_env_vars(container: &str, env: &std::collections::HashMap<String
         let line = format!("{}={}", key, val);
         // Hapus entry lama jika ada, lalu tambahkan
         let cmd = format!(
-            "sed -i '/^{}=/d' /etc/environment && echo '{}' >> /etc/environment",
+            "touch /etc/environment && sed -i '/^{}=/d' /etc/environment && echo '{}' >> /etc/environment",
             key, line
         );
         let ok = lxc_exec_silent(container, &cmd).await;
@@ -366,9 +375,14 @@ fn print_manifest_summary(manifest: &MelManifest, container_name: &str) {
     println!("  {}Distro   :{} {}", BOLD, RESET, manifest.container.distro);
 
     let dep_count = manifest.dependencies.apt.len()
+        + manifest.dependencies.apk.len()       // ← TAMBAH
+        + manifest.dependencies.pacman.len()    // ← TAMBAH
+        + manifest.dependencies.dnf.len()       // ← TAMBAH
         + manifest.dependencies.pip.len()
         + manifest.dependencies.npm.len()
-        + manifest.dependencies.cargo.len();
+        + manifest.dependencies.cargo.len()
+        + manifest.dependencies.gem.len()
+        + manifest.dependencies.composer.len();
     println!("  {}Deps     :{} {} paket total", BOLD, RESET, dep_count);
     println!("  {}Volumes  :{} {}", BOLD, RESET, manifest.volumes.mounts.len());
     println!("  {}Ports    :{} {}", BOLD, RESET, manifest.ports.expose.len());

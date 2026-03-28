@@ -174,7 +174,7 @@ pub fn build_system_install_cmd(pkg_manager: &str, deps: &DependencySection) -> 
         "pacman"          => &deps.pacman,
         "dnf" | "yum"     => &deps.dnf,
         "apk"             => &deps.apk,
-        "zypper"          => &deps.apk, // fallback ke apk jika pakai zypper (bisa disesuaikan)
+        "zypper"          => &deps.zypper, // fallback ke apk jika pakai zypper (bisa disesuaikan)
         _                 => return None, // PM tidak dikenal
     };
 

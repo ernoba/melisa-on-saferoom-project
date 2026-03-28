@@ -704,10 +704,15 @@ pub async fn send_command(name: &str, command_args: &[&str]) {
 pub async fn add_shared_folder(name: &str, host_path: &str, container_path: &str) {
     let config_path = format!("{}/{}/config", LXC_PATH, name);
 
+    if let Err(e) = fs::create_dir_all(host_path).await {
+    eprintln!("{}[ERROR]{} Gagal membuat direktori host '{}': {}", RED, RESET, host_path, e);
+    return;
+}
+    // Baru canonicalize — sekarang pasti exist
     let abs_host_path = match fs::canonicalize(host_path).await {
         Ok(path) => path,
         Err(e) => {
-            eprintln!("{}[ERROR]{} Invalid or missing host directory path: {}", RED, RESET, e);
+            eprintln!("{}[ERROR]{} Gagal resolve path '{}': {}", RED, RESET, host_path, e);
             return;
         }
     };

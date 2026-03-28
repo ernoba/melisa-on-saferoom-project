@@ -157,8 +157,6 @@ case $COMMAND in
         echo -e "${GREEN}[INFO]${RESET} Establishing secure shell connection to ${BOLD}$CONN${RESET}..."
         ssh -t "$CONN" 
         ;;
-        
-    *) 
 
     tunnel)
         if [ -z "$1" ] || [ -z "$2" ]; then
@@ -181,7 +179,8 @@ case $COMMAND in
         fi
         exec_tunnel_stop "$1" "${2:-}"
         ;;
-
+        
+    *) 
         # Fallback Router: If the command isn't recognized locally, 
         # forward the entire string directly to the remote MELISA host.
         exec_forward "$COMMAND" "$@" 
