@@ -1,41 +1,42 @@
 # Security & Permissions
 
-This page is a consolidated reference for all security-relevant behaviors and configurations in MELISA. See [Security Model](./concepts/security-model.md) in the Concepts section for the conceptual explanation.
-
----
-
-## File Permissions Reference
+## File Permission Reference
 
 | Path | Mode | Owner | Purpose |
 |------|------|-------|---------|
-| `/usr/local/bin/melisa` | `4755` (SUID) | `root:root` | Executable with root effective UID |
-| `/etc/sudoers.d/melisa` | `0440` | `root:root` | Global passwordless rule for `melisa` binary |
-| `/etc/sudoers.d/melisa_<user>` | `0440` | `root:root` | Per-user command whitelist |
-| `/etc/shells` | system | root | Contains `/usr/local/bin/melisa` as valid shell |
-| `/opt/melisa/projects/` | `1777` (sticky) | `root:root` | Master project storage; sticky prevents deletion |
-| `/opt/melisa/projects/<proj>/` | `2775` (setgid) | `root:melisa` | Project repo; setgid propagates melisa group |
-| `/var/lib/lxc/<n>/rootfs/etc/melisa-info` | `0644` | `root:root` | Container metadata (readable by container users) |
-| `/var/lib/lxc/<n>/config` | `0640` | `root:root` | LXC configuration |
-| `/home` | `711` | `root:root` | Traversable but not listable |
-| `/home/<user>` | `700` | `user:user` | Fully private to the user |
-| `~/.melisa_history` | `0600` | user | Command history; private after `--clear` |
-| `~/.config/melisa/` (client) | `700` | user | Profile directory |
-| `~/.config/melisa/registry` (client) | `600` | user | Project path database |
+| `/usr/local/bin/melisa` | `4755` (SUID) | `root` | Main binary — runs as root regardless of caller |
+| `/etc/sudoers.d/melisa` | `0440` | `root` | Global passwordless rule for `melisa` binary |
+| `/etc/sudoers.d/melisa_<user>` | `0440` | `root` | Per-user whitelist of allowed commands |
+| `/opt/melisa/projects/` | `1777` (Sticky) | `root:melisa` | Master bare Git repository storage |
+| `/var/lib/lxc/<n>/` | `0700` | `root` | Container root — inaccessible to non-root |
+| `/var/lib/lxc/<n>/rootfs/etc/melisa-info` | `0444` | `root` | MELISA metadata — read-only |
+| `/home` | `0711` | `root` | Traversable but not listable — hides user enumeration |
+| `/home/<user>` | `0700` | `<user>` | Fully private home directory |
+| `~/.melisa_history` | `0600` | `user` | Command history; private after `--clear` |
+| `~/.config/melisa/` (client) | `700` | `user` | Profile directory |
+| `~/.config/melisa/registry` (client) | `600` | `user` | Project path database |
 
 ---
 
 ## SSH Configuration (Client-Side)
 
-MELISA's `auth add` appends to `~/.ssh/config`:
+MELISA's `auth add` creates `~/.ssh/sockets/` and appends to `~/.ssh/config`:
 
 ```
 Host <server-ip>
   ControlMaster auto
-  ControlPath ~/.ssh/melisa_mux_%h_%p_%r
+  ControlPath ~/.ssh/sockets/%r@%h:%p
   ControlPersist 10m
 ```
 
-The `ControlPath` socket file is created at first connection and reused for 10 minutes. **Anyone with access to `~/.ssh/` can potentially hijack this socket.** Protect your `.ssh` directory with `chmod 700 ~/.ssh`.
+The `ControlPath` pattern `%r@%h:%p` expands at runtime to a Unix domain socket file. For example, a connection as `root` to `192.168.1.100:22` resolves to `~/.ssh/sockets/root@192.168.1.100:22`.
+
+The socket is created on first connection and reused for 10 minutes. **Anyone with access to `~/.ssh/` can potentially hijack this socket.** Protect your `.ssh` directory with `chmod 700 ~/.ssh`.
+
+> **Note for users upgrading from older installations:** Previous versions stored sockets with the naming pattern `~/.ssh/melisa_mux_%h_%p_%r` directly in `~/.ssh/`. If you have leftover files from an earlier install, remove them with:
+> ```bash
+> rm -f ~/.ssh/melisa_mux_*
+> ```
 
 ---
 

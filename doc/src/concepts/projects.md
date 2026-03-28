@@ -157,8 +157,8 @@ melisa get myapp
 2. Stages all changes: `git add .`
 3. Commits with an automatic timestamp message: `melisa-sync: 2026-03-20 16:30`
 4. Force-pushes to the master repository on the server
-5. SSH-triggers `melisa --update <project> --force` on the server to apply the working copy update
-6. Syncs any `.env` files via `rsync -azR` (because `.env` files are typically `.gitignore`d but still needed on the server)
+5. The `post-receive` hook on the server fires automatically, running `melisa --update-all <project>` to propagate the latest commit to all member workspaces — no explicit client-side SSH call is needed for this step
+6. Syncs any `.env` files via `rsync -azR` to the user's server-side workspace (because `.env` files are typically `.gitignore`d but still needed on the server)
 
 ### `melisa get` in Detail
 

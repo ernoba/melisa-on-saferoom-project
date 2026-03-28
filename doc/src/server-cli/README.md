@@ -72,7 +72,9 @@ Available to all users:
 | [`--use <n>`](./container-interaction.md) | Attach an interactive shell to a container |
 | [`--send <n> <cmd>`](./container-interaction.md) | Execute a non-interactive command inside a container |
 | [`--info <n>`](./container-interaction.md) | Display container metadata |
+| [`--ip <n>`](./container-interaction.md) | Get the internal IP address of a container |
 | [`--upload <n> <dest>`](./container-interaction.md) | Upload a tarball stream into a container |
+| [`--mel-info <file.mel>`](./deployment-engine.md) | Display parsed info for a `.mel` manifest |
 | [`--projects`](./project-management.md) | List projects in your workspace |
 | [`--update <project> [--force]`](./project-management.md) | Sync your working copy from the master repo |
 | `cd <path>` | Change directory within the MELISA shell session |
@@ -91,6 +93,8 @@ Available to **Administrators** only:
 | [`--delete <n>`](./container-lifecycle.md) | Destroy a container |
 | [`--share <n> <host> <cont>`](./container-interaction.md) | Mount a host directory into a container |
 | [`--reshare <n> <host> <cont>`](./container-interaction.md) | Unmount a host directory from a container |
+| [`--up <file.mel>`](./deployment-engine.md) | Deploy a project from a `.mel` manifest |
+| [`--down <file.mel>`](./deployment-engine.md) | Stop a deployment defined in a `.mel` manifest |
 | [`--add <user>`](./user-management.md) | Create a new MELISA user |
 | [`--remove <user>`](./user-management.md) | Delete a MELISA user |
 | [`--upgrade <user>`](./user-management.md) | Promote a user to Admin |

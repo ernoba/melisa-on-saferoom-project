@@ -107,7 +107,7 @@ fn display_system_dashboard(sys: &mut System) {
         r#" ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝╚══════╝╚═╝  ╚═╝ "#,
         r#"    [ MANAGEMENT ENVIRONMENT LINUX SANDBOX ]    "#,
         r#""#,
-        r#"[v - 0.1.2 | delta version]"#,
+        r#"[v - 0.1.3 | delta version]"#,
     ];
 
     for line in melisa_text {

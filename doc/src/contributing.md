@@ -11,8 +11,12 @@ melisa-on-saferoom-project/
 ├── src/
 │   ├── cli/              ← Terminal UI (REPL, prompts, colors, spinner)
 │   ├── core/             ← Business logic (containers, users, projects, setup)
+│   ├── deployment/       ← Deployment Engine (mel_parser, deployer, dependency)
 │   ├── distros/          ← OS detection, LXC distribution catalog
 │   ├── melisa_client/    ← Bash client scripts and installer
+│   │   ├── src/          ← Client source (melisa, auth.sh, exec.sh, utils.sh, db.sh)
+│   │   ├── ut_/          ← Client tests (test_melisa.py, test_tunnel_and_crossregion.py)
+│   │   └── install.sh
 │   └── main.rs           ← Entry point, Tokio runtime
 ├── doc/
 │   ├── src/              ← MDBook Markdown source files
@@ -53,6 +57,14 @@ mdbook build
 
 # Serve locally with hot-reload
 mdbook serve --open
+```
+
+### Running the Client Tests
+
+```bash
+cd src/melisa_client/ut_
+python3 test_melisa.py
+python3 test_tunnel_and_crossregion.py
 ```
 
 ---
@@ -128,6 +140,18 @@ my_command)
 3. Make your changes with tests if applicable
 4. Run `cargo clippy` and `cargo fmt` before committing
 5. Open a Pull Request describing what you changed and why
+
+---
+
+## What We're Looking For
+
+- Bug fixes with a test case or reproduction steps
+- New distribution support in `src/distros/host_distro.rs`
+- Documentation improvements (especially in `doc/src/`)
+- New story chapters in `doc/src/story/`
+- Performance improvements to the Tokio async pipeline
+- Client-side test coverage in `src/melisa_client/ut_/`
+- New `.mel` manifest examples and deployment patterns
 
 ---
 

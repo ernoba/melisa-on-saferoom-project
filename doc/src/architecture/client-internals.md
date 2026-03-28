@@ -106,7 +106,7 @@ The boundary check (`"${path}/"*` not just `"${path}"*`) prevents `/projects/app
 
 When `auth add` configures multiplexing, it creates `~/.ssh/sockets/` and writes to `~/.ssh/config`:
 
-```
+```bash
 Host 192.168.1.100
   User root
   ControlMaster auto
@@ -181,18 +181,19 @@ exec_sync() {
     # 6. Force push (local state wins)
     git push -f origin "$branch"
 
-    # 7. SSH: trigger server-side hard reset
-    ssh "$CONN" "melisa --update $project_name --force"
-
-    # 8. Sync .env files via rsync with relative paths (-R flag)
+    # 7. Sync .env files via rsync with relative paths (-R flag)
+    local remote_user=$(get_remote_user)
     local env_files=$(find . -maxdepth 2 -type f -name ".env")
     if [ -n "$env_files" ]; then
-        echo "$env_files" | xargs -I {} rsync -azR "{}" "$CONN:~/$project_name/"
+        echo "$env_files" | xargs -I {} rsync -azR "{}" \
+            "$CONN:/home/${remote_user}/${project_name}/"
     fi
 }
 ```
 
-**Why `--allow-empty`?** Without it, `git commit` fails if there are no staged changes, breaking the sync pipeline. With it, even a "nothing changed" sync creates a commit and pushes successfully, ensuring the server always gets the latest `melisa --update` trigger.
+**Why no explicit `melisa --update` call?** The force push in step 6 triggers the `post-receive` hook on the server, which automatically runs `melisa --update-all <project>`. The client does not need to make a separate SSH call for this — the Git protocol delivers the trigger. You will see the log message `"Synchronization complete. Server will propagate changes via post-receive hook."` confirming this flow.
+
+**Why `--allow-empty`?** Without it, `git commit` fails if there are no staged changes, breaking the sync pipeline. With it, even a "nothing changed" sync creates a commit and pushes successfully, ensuring the post-receive hook always fires.
 
 **The `-R` flag in rsync:** The `-R` (relative) flag preserves the path structure relative to the rsync source. So `./config/.env` syncs to `~/myapp/config/.env` on the server, not `~/myapp/.env`.
 
@@ -217,6 +218,39 @@ mkdir myapp && cd myapp
 melisa clone myapp   # Without anti-nesting: creates myapp/myapp/
                      # With anti-nesting: clones into current dir
 ```
+
+---
+
+## `exec_tunnel` — SSH Tunnel State Machine
+
+The tunnel subsystem manages persistent background SSH processes with state stored in `~/.config/melisa/tunnels/`:
+
+```
+~/.config/melisa/tunnels/
+├── myapp_3000.pid     ← PID of the background ssh -N -f process
+└── myapp_3000.meta    ← Tunnel metadata (container, ports, server, started)
+```
+
+The `.meta` file format:
+```
+container=myapp
+container_ip=10.0.3.5
+remote_port=3000
+local_port=3000
+server=root@192.168.1.100
+started=2026-03-20 16:30:00
+```
+
+**How `exec_tunnel` works:**
+
+1. Queries `melisa --ip <container>` on the server to resolve the container's internal IP
+2. Checks if `local_port` is already in use (`ss -tlnp`)
+3. If a previous tunnel for the same `container+port` key exists, kills the old PID first
+4. Spawns `ssh -N -f -L local_port:container_ip:remote_port` in the background
+5. Uses `pgrep` to capture the spawned PID and writes it to `.pid`
+6. Writes all tunnel metadata to `.meta`
+
+`exec_tunnel_list` reads `.meta` files and validates each `.pid` with `kill -0` (non-destructive signal — only checks if the process exists). Dead tunnels are automatically cleaned up from the list.
 
 ---
 

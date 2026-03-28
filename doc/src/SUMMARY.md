@@ -23,11 +23,13 @@
   - [Container Interaction](./server-cli/container-interaction.md)
   - [User Management](./server-cli/user-management.md)
   - [Project Management](./server-cli/project-management.md)
+  - [Deployment Engine (.mel)](./server-cli/deployment-engine.md)
 
 - [Client CLI Reference](./client-cli/README.md)
   - [Authentication & Profiles](./client-cli/authentication.md)
   - [Project Workflow](./client-cli/project-workflow.md)
   - [Remote Execution](./client-cli/remote-execution.md)
+  - [SSH Tunnels](./client-cli/tunnels.md)
 
 - [Security & Permissions](./security.md)
 - [Architecture & Internals](./architecture/README.md)
